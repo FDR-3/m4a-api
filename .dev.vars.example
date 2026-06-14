@@ -1,0 +1,6 @@
+JUPITER_API_KEY="<Your-ApiKey>"
+HELIUS_API_KEY="<Your-ApiKey>"
+ORACLE_SECRET_KEY="[
+  <Your-SecretKey-ByteArray>
+]"
+ORACLE_SECRET_KEY_BASE58="<Your-Base58-PrivateKey>"
