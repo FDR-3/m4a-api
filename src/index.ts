@@ -11,13 +11,10 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-import { Connection, PublicKey, Keypair } from "@solana/web3.js"
+import { Keypair, VersionedTransaction, Transaction } from "@solana/web3.js"
 import { tokenDecimalHashMap, tokenMintAddressHashMap } from "./tokens"
-import { sign } from 'tweetnacl'
-import BN from 'bn.js'
-import * as borsh from '@coral-xyz/borsh'
-import { Buffer } from "node:buffer"
-
+import BN from "bn.js"
+import { getAnchorWorkSpace, validateIncomingTransactions } from "./anchorWorkSpace"
 
 //Define your hardcoded fiat stablecoin basket anchors
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" //6 Decimals
@@ -46,8 +43,8 @@ export default
 		const url = new URL(request.url)
 
 		//Oracle update endpoint
-		if(url.pathname === '/api/getM4AVerifiedPrices' && request.method === 'POST')
-			return getM4AVerifiedPrices(request, env)
+		if(url.pathname === '/api/bundleProtocolPriceTransactions' && request.method === 'POST')
+			return bundleProtocolPriceTransactions(request, env)
 
 		return new Response('Hello World! Brah!',
 		{
@@ -59,20 +56,13 @@ export default
 	}
 } satisfies ExportedHandler<Env>
 
-async function getM4AVerifiedPrices(request: Request, env: any): Promise<Response>
+async function bundleProtocolPriceTransactions(request: Request, env: any): Promise<Response>
 {
 	try
 	{
-		const body = await request.json() as
-		{
-			tokenIds: number[]
-		}
-
-		const { tokenIds } = body
-
-		if(tokenIds.length == 0)
-			throw new Error('No Token Ids Provided To Oracle')
-
+		//Grab the raw binary array directly from the request strea
+    const [tokenIds, hydratedTransactions] = await getTokenIdsAndSignedTransactionsFromMessageBuffer(request)
+		console.log(hydratedTransactions)
 		/*//1. Generate a new key pair
 		const keypair = Keypair.generate()
 		//2. Print Public Key (Base58 encoded)
@@ -84,110 +74,65 @@ async function getM4AVerifiedPrices(request: Request, env: any): Promise<Respons
 		//This format is what you usually import into wallets like Phantom
 		console.log('Secret Key (Base58):', bs58.encode(keypair.secretKey))*/
 
-		const priceCheckedHashMap = new Map<number, boolean>()//This is used to keep the server from getting tied up with a long array of the some Token Id's
-		const normalizedPrices18Decimals: BN[] = []
-
-		//1. Get USDC Value first
+		const program = getAnchorWorkSpace(env)
+		const transactionSignerPubKey = validateIncomingTransactions(hydratedTransactions, program)
+		console.log("transactionSignerPubKey: ", transactionSignerPubKey.toBase58())
+		
+		//Get USDC Value first
 		const usdcTrueValue = await calculateUsdcTrueValue(env)
 		console.log(`Current Calculated USDC Value: $${usdcTrueValue}`)
-
-		//2. Query Jupiter V6 Routing Quotes for all other token values compared to USDC
-    for(const tokenId of tokenIds)
-		{
-			const tokenMintAddress = tokenMintAddressHashMap.get(tokenId)
-
-			if(!tokenMintAddress)
-				throw new Error(`Requested Token Id not found in hash map for Id: ${tokenId}`)
-
-			const wasPreviouslyChecked = priceCheckedHashMap.get(tokenId)
-
-			if(wasPreviouslyChecked)
-				throw new Error("Duplicate Token Ids Detected")
-
-			priceCheckedHashMap.set(tokenId, true)
-
-			console.log(tokenMintAddress)
-			console.log("\nChecking spot price for: ", tokenMintAddress)
-
-      if(tokenMintAddress !== USDC_MINT)
-			{
-				const sellTokenDecimals =  tokenDecimalHashMap.get(tokenMintAddress)
-				if(!sellTokenDecimals)
-					throw new Error(`Decimal entry not found in hash map for token: ${tokenMintAddress}`)
-
-				//Configure a trade size that has meaningful weight (e.g., 50 tokens)
-				const tokenAmountSimulatedSold = new BN(50)
-				const inputAmount = tokenAmountSimulatedSold.mul(new BN(Math.pow(10, sellTokenDecimals))) 
-
-				const quoteResponse = await fetch("https://api.jup.ag/swap/v2/order?" +
-					new URLSearchParams(
-					{
-						inputMint: tokenMintAddress, //Non USDC Token
-						outputMint: USDC_MINT, //USDC
-						amount: Number(inputAmount).toString(), //50 full tokens
-        		slippageBps: "0" //Pure spot check
-					}),
-					{ headers: { "x-api-key": env.JUPITER_API_KEY } }
-				)
-
-        if(!quoteResponse.ok)
-          throw new Error(`Jupiter V6 quote failed for token ${tokenMintAddress}`)
-
-        const quoteData: any = await quoteResponse.json()
-				const priceImpactPct = Math.abs(parseFloat(quoteData.priceImpactPct))
-
-				console.log(`Pool Price Impact for ${tokenAmountSimulatedSold} tokens: ${(priceImpactPct * 100).toFixed(4)}%`)
-			
-				//SECURITY THRESHOLD: 
-				//If selling 50 tokens has more than a 2.5% price impact, reject the oracle price.
-				//This stops thin-liquidity pools from being used to exploit the lending pool.
-				if(priceImpactPct > 0.025)
-					throw new Error(`Oracle rejected: High price impact (${(priceImpactPct * 100).toFixed(2)}%) indicates unsafe low liquidity or active manipulation.`)
-        
-				//2. CALCULATE THE SPOT PRICE
-				const rawOutAmount = new BN(quoteData.outAmount) // Raw USDC tokens received (6 decimals)
-
-				//We want to calculate: (rawOutAmount / inputAmount) * usdcTrueValue
-				//To keep precision in integer math, we perform all multiplications BEFORE division.
-				//rawOutAmount (6 decimals) * usdcTrueValue (18 decimals) = 24 decimals combined.
-				//Then we divide by inputAmount (which has the sell token's native decimals).
-				//This natively produces our target 18-decimal value!
-				const totalValueIn18Decimals = rawOutAmount.mul(usdcTrueValue)
-				const finalPrice18Decimals = totalValueIn18Decimals.div(inputAmount)
-
-				if(finalPrice18Decimals.lt(zeroBN))
-					throw new Error(`The price can't be negative: ${finalPrice18Decimals}`)
-
-				normalizedPrices18Decimals.push(finalPrice18Decimals)
-
-				console.log(`Derived Unit Price Normalized: ${finalPrice18Decimals}`)
-      }
-			else
-			{
-				if(usdcTrueValue.lt(zeroBN))
-					throw new Error(`The price can't be negative: ${usdcTrueValue}`)
-
-				normalizedPrices18Decimals.push(usdcTrueValue)
-				console.log(`USDC value in USDS Normalized: ${usdcTrueValue}`)
-			}
-    }
-
-		const secretKeyArray = JSON.parse(env.ORACLE_SECRET_KEY)
-		const oracleKeypair = Keypair.fromSecretKey(new Uint8Array(secretKeyArray))
-		//const rpcURL = "https://devnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY
-		const rpcURL = "https://mainnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY
+		//Query Jupiter V6 Routing Quotes for all other token values compared to USDC
+		const normalizedPrices18Decimals = await getUSDCPrices(tokenIds, usdcTrueValue, env)
 		
-		const connection = new Connection("http://127.0.0.1:8899", "processed")
-		const slot = new BN(await connection.getSlot("processed"))
+		var data = []
+
+		for(var i=0; i<tokenIds.length; i++)
+			data.push({ tokenId: tokenIds[i], normalizedPrice18Decimals: normalizedPrices18Decimals[i] })
+
+		const slot = new BN(await program.provider.connection.getSlot("processed"))
 
 		const payload =
 		{
-			tokenIds: Buffer.from(tokenIds),
-			normalizedPrices18Decimals,
+			data,
 			slot
 		}
+		const secretKeyArray = JSON.parse(env.ORACLE_SECRET_KEY)
+  	const oracleKeypair = Keypair.fromSecretKey(new Uint8Array(secretKeyArray))
 
-		const signature = performED25519Signature(payload, oracleKeypair)
+		const createTempOraclePriceDataInstruction = await program.methods.createTempOraclePriceData(payload)
+      .accounts({ lendingUserAddress: transactionSignerPubKey })
+			.instruction()
+
+		const priceTransaction = new Transaction
+		priceTransaction.add(createTempOraclePriceDataInstruction)
+
+    const latestBlockhash = await program.provider.connection.getLatestBlockhash()
+    priceTransaction.recentBlockhash = latestBlockhash.blockhash
+    priceTransaction.feePayer = oracleKeypair.publicKey
+
+    //Oracle Signs the price data transaction
+    priceTransaction.sign(oracleKeypair)
+
+		console.log("price transaction size: ", priceTransaction.serialize().length)
+		await program.provider.connection.sendRawTransaction(priceTransaction.serialize(), { skipPreflight: false })
+
+
+		await timeOutFunction(0.4)
+	
+
+		var userTxs = []
+		for(var i=0; i<hydratedTransactions.length; i++)
+		{
+			try 
+			{
+				userTxs[i] = await program.provider.connection.sendRawTransaction(hydratedTransactions[i].serialize(), { skipPreflight: false })
+				console.log(`Transaction submitted successfully. Signature: ${userTxs[i]}`)
+			}
+			catch(error: any)
+			{
+				throw(error)
+			}
+		}	
 
 		console.log("Oracle fetched prices successfully.")
 
@@ -195,11 +140,7 @@ async function getM4AVerifiedPrices(request: Request, env: any): Promise<Respons
 		return new Response(
 			JSON.stringify(
 			{
-				m4aVerifiedPriceData: 
-				{
-					payload: payload,
-					signature: signature
-				}
+				userTxs
 			}),
 			{
 				status: 200,
@@ -230,6 +171,50 @@ async function getM4AVerifiedPrices(request: Request, env: any): Promise<Respons
 			}
 		)
 	}
+}
+
+async function getTokenIdsAndSignedTransactionsFromMessageBuffer(request: Request): Promise<[number[], VersionedTransaction[]]>
+{
+	const arrayBuffer = await request.arrayBuffer()
+	const view = new DataView(arrayBuffer)
+	const fullUint8Array = new Uint8Array(arrayBuffer)
+	const tokenIds: number[] = []
+	const hydratedTransactions: VersionedTransaction[] = []
+	console.log("SERVER: Incoming request content-length header =", request.headers.get("content-length"))
+	console.log("SERVER: Received arrayBuffer byteLength =", arrayBuffer.byteLength)
+
+	let offset = 0
+
+	//Unpack Token IDs
+	const tokenIdsLength = view.getUint32(offset, true)
+	offset += 4
+	
+	for(let i = 0; i<tokenIdsLength; i++)
+	{
+		tokenIds.push(view.getUint8(offset))
+		offset += 1
+	}
+
+	if(tokenIds.length === 0)
+		throw new Error('No Token Ids Provided To Oracle')
+
+	//Unpack and Hydrate Transactions
+	const txsLength = view.getUint32(offset, true)
+	offset += 4
+
+	for (let i = 0; i<txsLength; i++)
+	{
+		const txSize = view.getUint32(offset, true)
+		offset += 4
+
+		//Extract the exact slice belonging to this transaction
+		const txBytes = fullUint8Array.subarray(offset, offset + txSize)
+		offset += txSize
+
+		hydratedTransactions.push(VersionedTransaction.deserialize(txBytes))
+	}
+
+	return [tokenIds, hydratedTransactions]
 }
 
 async function calculateUsdcTrueValue(env: any): Promise<BN>
@@ -286,8 +271,96 @@ async function calculateUsdcTrueValue(env: any): Promise<BN>
   }
 }
 
-function performED25519Signature(
-  payload: { tokenIds: Buffer; normalizedPrices18Decimals: BN[]; slot: BN }, 
+async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
+{
+	const priceCheckedHashMap = new Map<number, boolean>()//This is used to keep the server from getting tied up with a long array of the same Token Id's
+	const normalizedPrices18Decimals: BN[] = []
+	//2. Query Jupiter V6 Routing Quotes for all other token values compared to USDC
+	for(const tokenId of tokenIds)
+	{
+		const tokenMintAddress = tokenMintAddressHashMap.get(tokenId)
+
+		if(!tokenMintAddress)
+			throw new Error(`Requested Token Id not found in hash map for Id: ${tokenId}`)
+
+		const wasPreviouslyChecked = priceCheckedHashMap.get(tokenId)
+
+		if(wasPreviouslyChecked)
+			throw new Error("Duplicate Token Ids Detected")
+
+		priceCheckedHashMap.set(tokenId, true)
+
+		console.log(tokenMintAddress)
+		console.log("\nChecking spot price for: ", tokenMintAddress)
+
+		if(tokenMintAddress !== USDC_MINT)
+		{
+			const sellTokenDecimals =  tokenDecimalHashMap.get(tokenMintAddress)
+			if(!sellTokenDecimals)
+				throw new Error(`Decimal entry not found in hash map for token: ${tokenMintAddress}`)
+
+			//Configure a trade size that has meaningful weight (e.g., 50 tokens)
+			const tokenAmountSimulatedSold = new BN(50)
+			const inputAmount = tokenAmountSimulatedSold.mul(new BN(Math.pow(10, sellTokenDecimals))) 
+
+			const quoteResponse = await fetch("https://api.jup.ag/swap/v2/order?" +
+				new URLSearchParams(
+				{
+					inputMint: tokenMintAddress, //Non USDC Token
+					outputMint: USDC_MINT, //USDC
+					amount: Number(inputAmount).toString(), //50 full tokens
+					slippageBps: "0" //Pure spot check
+				}),
+				{ headers: { "x-api-key": env.JUPITER_API_KEY } }
+			)
+
+			if(!quoteResponse.ok)
+				throw new Error(`Jupiter V6 quote failed for token ${tokenMintAddress}`)
+
+			const quoteData: any = await quoteResponse.json()
+			const priceImpactPct = Math.abs(parseFloat(quoteData.priceImpactPct))
+
+			console.log(`Pool Price Impact for ${tokenAmountSimulatedSold} tokens: ${(priceImpactPct * 100).toFixed(4)}%`)
+		
+			//SECURITY THRESHOLD: 
+			//If selling 50 tokens has more than a 2.5% price impact, reject the oracle price.
+			//This stops thin-liquidity pools from being used to exploit the lending pool.
+			if(priceImpactPct > 0.025)
+				throw new Error(`Oracle rejected: High price impact (${(priceImpactPct * 100).toFixed(2)}%) indicates unsafe low liquidity or active manipulation.`)
+			
+			//2. CALCULATE THE SPOT PRICE
+			const rawOutAmount = new BN(quoteData.outAmount) // Raw USDC tokens received (6 decimals)
+
+			//We want to calculate: (rawOutAmount / inputAmount) * usdcTrueValue
+			//To keep precision in integer math, we perform all multiplications BEFORE division.
+			//rawOutAmount (6 decimals) * usdcTrueValue (18 decimals) = 24 decimals combined.
+			//Then we divide by inputAmount (which has the sell token's native decimals).
+			//This natively produces our target 18-decimal value!
+			const totalValueIn18Decimals = rawOutAmount.mul(usdcTrueValue)
+			const finalPrice18Decimals = totalValueIn18Decimals.div(inputAmount)
+
+			if(finalPrice18Decimals.lt(zeroBN))
+				throw new Error(`The price can't be negative: ${finalPrice18Decimals}`)
+
+			normalizedPrices18Decimals.push(finalPrice18Decimals)
+
+			console.log(`Derived Unit Price Normalized: ${finalPrice18Decimals}`)
+		}
+		else
+		{
+			if(usdcTrueValue.lt(zeroBN))
+				throw new Error(`The price can't be negative: ${usdcTrueValue}`)
+
+			normalizedPrices18Decimals.push(usdcTrueValue)
+			console.log(`USDC value in USDS Normalized: ${usdcTrueValue}`)
+		}
+	}
+
+	return normalizedPrices18Decimals
+}
+
+/*function performED25519Signature(
+  payload: { tokenIds: Buffer, normalizedPrices18Decimals: BN[], slot: BN }, 
   oracleKeypair: Keypair): number[]
 {
   
@@ -309,4 +382,31 @@ function performED25519Signature(
   const signatureBytes = sign.detached(messageBuffer, oracleKeypair.secretKey)
 
   return Array.from(signatureBytes)
+}*/
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+async function timeOutFunction(timeToWaitInSeconds: number)
+{
+	timeOutCountDown(timeToWaitInSeconds)
+
+	const timeToWaitInMilliSeconds = timeToWaitInSeconds * 1000
+	console.log("Sleeping for: " + timeToWaitInSeconds + " seconds")
+	await sleep(timeToWaitInMilliSeconds)
+}
+
+function timeOutCountDown(timeToWaitInSeconds: number)
+{
+	var timeLeftInSeconds = timeToWaitInSeconds
+	console.log(`${timeLeftInSeconds} Timeout Seconds Left`)
+
+	const countDownIntervalId = setInterval(() =>
+	{
+		timeLeftInSeconds -= 10
+		if(timeLeftInSeconds > 0)
+			console.log(`${timeLeftInSeconds} Timeout Seconds Left`)
+		
+		if(timeLeftInSeconds <= 0)
+			clearInterval(countDownIntervalId)  
+	}, 10000) 
 }
