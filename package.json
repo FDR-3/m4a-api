@@ -19,9 +19,18 @@
 	},
 	"dependencies": {
 		"@coral-xyz/anchor": "^0.32.1",
-		"@coral-xyz/borsh": "^0.32.1",
 		"@solana/web3.js": "^1.98.4",
 		"Buffer": "^0.0.0",
 		"tweetnacl": "^1.0.3"
+	},
+	"allowScripts": {
+		"bufferutil@4.1.0": true,
+		"esbuild@0.28.1": true,
+		"sharp@0.34.5": true,
+		"utf-8-validate@6.0.6": true,
+		"workerd@1.20260625.1": true
+	},
+	"overrides": {
+		"uuid": "^11.1.1"
 	}
 }
