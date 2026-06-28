@@ -12,7 +12,15 @@
 	},
 	"compatibility_flags": [
 		"nodejs_compat"
-	]
+	],
+	"workers_dev": true,
+    "preview_urls": true,
+	"routes": [
+        {
+            "pattern": "m4a.io/Api*",
+            "zone_name": "m4a.io"
+        }
+    ]
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

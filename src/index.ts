@@ -12,9 +12,9 @@
  */
 
 import { Keypair, VersionedTransaction, Transaction } from "@solana/web3.js"
-import { tokenDecimalHashMap, tokenMintAddressHashMap } from "./tokens"
+import { tokenDecimalHashMap, tokenMintAddressHashMap } from "./Tokens"
 import BN from "bn.js"
-import { getAnchorWorkSpace, validateIncomingTransactions } from "./anchorWorkSpace"
+import { getAnchorWorkSpace, validateIncomingTransactions } from "./AnchorWorkSpace"
 
 //Define your hardcoded fiat stablecoin basket anchors
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" //6 Decimals
@@ -43,7 +43,7 @@ export default
 		const url = new URL(request.url)
 
 		//Oracle update endpoint
-		if(url.pathname === '/api/bundleProtocolPriceTransactions' && request.method === 'POST')
+		if(url.pathname === '/Api/bundleProtocolPriceTransactions' && request.method === 'POST')
 			return bundleProtocolPriceTransactions(request, env)
 
 		return new Response('Hello World! Brah!',

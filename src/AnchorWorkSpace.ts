@@ -13,7 +13,8 @@ export function getAnchorWorkSpace(env: any): anchor.Program
   const oracleKeypair = Keypair.fromSecretKey(new Uint8Array(secretKeyArray))
 
   //Set up connection using your env variables
-  const connection = new Connection("http://127.0.0.1:8899", "processed")
+  //const connection = new Connection("http://127.0.0.1:8899", "processed")
+  const connection = new Connection("https://api.testnet.solana.com", "processed")
 
   //browser-safe mock Wallet interface matching Anchor's expectations
   const edgeSafeWallet =
