@@ -51,22 +51,24 @@ export function validateIncomingTransactions(txs: VersionedTransaction[], progra
 {
   const allowedInstructions = new Set(
   [
-    "borrowTokens", 
-    "refreshUserHealthChunkAndTokenReserves",
     "createNewMonthlyStatement",
+    "refreshUserHealthChunkAndTokenReserves",
+    "borrowTokens", 
     "withdrawTokens",
-    "repayToken",
+    "repayTokens",
     "liquidateAccount",
-    "liquidateAccountSameToken"
+    "liquidateAccountSameToken",
+    "liquidateAccountSameSubMarket"
   ])
 
   const actionInstructions = new Set(
   [
     "withdrawTokens", 
     "borrowTokens", 
-    "repayToken", 
+    "repayTokens", 
     "liquidateAccount", 
-    "liquidateAccountSameToken"
+    "liquidateAccountSameToken",
+    "liquidateAccountSameSubMarket"
   ])
 
   //Intermediate array to track our program's instructions in execution order
