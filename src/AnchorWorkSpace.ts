@@ -123,7 +123,7 @@ export function validateIncomingTransactions(txs: VersionedTransaction[], progra
   }
 
   if(sequence.length === 0)
-    throw new Error("Oracle Rejected: No protocol instructions found in the transaction bundle.")
+    throw new Error("Oracle Rejected: No protocol instructions found in the transaction bundle.\nIs the Program ID correct in the IDL file?")
 
   // --- PHASE 2: SEQUENCE STATE & PARAMETER VALIDATION ---
   
