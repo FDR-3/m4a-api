@@ -14,7 +14,7 @@ export function getAnchorWorkSpace(env: any): anchor.Program
 
   //Set up connection using your env variables
   //const connection = new Connection("http://127.0.0.1:8899", "processed")
-  const connection = new Connection("https://api.testnet.solana.com", "processed")
+  const connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
 
   //browser-safe mock Wallet interface matching Anchor's expectations
   const edgeSafeWallet =

@@ -12,7 +12,10 @@
  */
 
 import { Keypair, VersionedTransaction, Transaction } from "@solana/web3.js"
-import { tokenDecimalHashMap, tokenMintAddressHashMap } from "./Tokens"
+import { tokenDecimalHashMap,
+	tokenMintAddressHashMap,
+	tokenNamesHashMap,
+	tokenSellAmountsHashMap } from "./Tokens"
 import BN from "bn.js"
 import { getAnchorWorkSpace, validateIncomingTransactions } from "./AnchorWorkSpace"
 
@@ -62,17 +65,6 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 	{
 		//Grab the raw binary array directly from the request strea
     const [tokenIds, hydratedTransactions] = await getTokenIdsAndSignedTransactionsFromMessageBuffer(request)
-		console.log(hydratedTransactions)
-		/*//1. Generate a new key pair
-		const keypair = Keypair.generate()
-		//2. Print Public Key (Base58 encoded)
-		console.log('Public Key (Address):', keypair.publicKey.toBase58())
-		//3. Print Private Key / Secret Key
-		//The secret key is a 64-byte Uint8Array (32 bytes private key + 32 bytes public key)
-		console.log('Secret Key (Uint8Array):', keypair.secretKey)
-		//4. (Optional) Print Private Key as a Base58 string
-		//This format is what you usually import into wallets like Phantom
-		console.log('Secret Key (Base58):', bs58.encode(keypair.secretKey))*/
 
 		const program = getAnchorWorkSpace(env)
 		const transactionSignerPubKey = validateIncomingTransactions(hydratedTransactions, program)
@@ -80,7 +72,13 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 		
 		//Get USDC Value first
 		const usdcTrueValue = await calculateUsdcTrueValue(env)
-		console.log(`Current Calculated USDC Value: $${usdcTrueValue}`)
+		//Pad string out to 19 characters to guarantee the slice logic functions cleanly below $1.00
+		const priceStringClean = usdcTrueValue.toString().padStart(19, '0')
+		const integerPart = priceStringClean.toString().slice(0, -18)
+		const formatedIntegerPart = Number(integerPart).toLocaleString('en-US')
+		const decimalPart = priceStringClean.toString().slice(-18)
+		console.log(`Current Calculated USDC Value: $${formatedIntegerPart}.${decimalPart}`)
+
 		//Query Jupiter V6 Routing Quotes for all other token values compared to USDC
 		const normalizedPrices18Decimals = await getUSDCPrices(tokenIds, usdcTrueValue, env)
 		
@@ -116,10 +114,8 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 		console.log("price transaction size: ", priceTransaction.serialize().length)
 		await program.provider.connection.sendRawTransaction(priceTransaction.serialize(), { skipPreflight: false })
 
-
 		await timeOutFunction(0.4)
 	
-
 		var userTxs = []
 		for(var i=0; i<hydratedTransactions.length; i++)
 		{
@@ -275,7 +271,7 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 {
 	const priceCheckedHashMap = new Map<number, boolean>()//This is used to keep the server from getting tied up with a long array of the same Token Id's
 	const normalizedPrices18Decimals: BN[] = []
-	//2. Query Jupiter V6 Routing Quotes for all other token values compared to USDC
+	//Query Jupiter V6 Routing Quotes for all other token values compared to USDC
 	for(const tokenId of tokenIds)
 	{
 		const tokenMintAddress = tokenMintAddressHashMap.get(tokenId)
@@ -290,8 +286,8 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 
 		priceCheckedHashMap.set(tokenId, true)
 
-		console.log(tokenMintAddress)
-		console.log("\nChecking spot price for: ", tokenMintAddress)
+		console.log("\ntokenMintAddress: ", tokenMintAddress)
+		console.log("Checking spot price for: ", tokenNamesHashMap.get(tokenId))
 
 		if(tokenMintAddress !== USDC_MINT)
 		{
@@ -300,7 +296,7 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 				throw new Error(`Decimal entry not found in hash map for token: ${tokenMintAddress}`)
 
 			//Configure a trade size that has meaningful weight (e.g., 50 tokens)
-			const tokenAmountSimulatedSold = new BN(50)
+			const tokenAmountSimulatedSold = new BN(Number(tokenSellAmountsHashMap.get(tokenId)))
 			const inputAmount = tokenAmountSimulatedSold.mul(new BN(Math.pow(10, sellTokenDecimals))) 
 
 			const quoteResponse = await fetch("https://api.jup.ag/swap/v2/order?" +
@@ -308,7 +304,7 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 				{
 					inputMint: tokenMintAddress, //Non USDC Token
 					outputMint: USDC_MINT, //USDC
-					amount: Number(inputAmount).toString(), //50 full tokens
+					amount: Number(inputAmount).toString(), //simulate sell token amount
 					slippageBps: "0" //Pure spot check
 				}),
 				{ headers: { "x-api-key": env.JUPITER_API_KEY } }
@@ -323,36 +319,46 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 			console.log(`Pool Price Impact for ${tokenAmountSimulatedSold} tokens: ${(priceImpactPct * 100).toFixed(4)}%`)
 		
 			//SECURITY THRESHOLD: 
-			//If selling 50 tokens has more than a 2.5% price impact, reject the oracle price.
+			//If selling tokenAmountSimulatedSold amount has more than a 2.5% price impact, reject the oracle price.
 			//This stops thin-liquidity pools from being used to exploit the lending pool.
 			if(priceImpactPct > 0.025)
 				throw new Error(`Oracle rejected: High price impact (${(priceImpactPct * 100).toFixed(2)}%) indicates unsafe low liquidity or active manipulation.`)
 			
 			//2. CALCULATE THE SPOT PRICE
-			const rawOutAmount = new BN(quoteData.outAmount) // Raw USDC tokens received (6 decimals)
+			const rawOutAmount = new BN(quoteData.outAmount) //Raw USDC tokens received (6 decimals)
 
-			//We want to calculate: (rawOutAmount / inputAmount) * usdcTrueValue
-			//To keep precision in integer math, we perform all multiplications BEFORE division.
-			//rawOutAmount (6 decimals) * usdcTrueValue (18 decimals) = 24 decimals combined.
-			//Then we divide by inputAmount (which has the sell token's native decimals).
-			//This natively produces our target 18-decimal value!
-			const totalValueIn18Decimals = rawOutAmount.mul(usdcTrueValue)
-			const finalPrice18Decimals = totalValueIn18Decimals.div(inputAmount)
+			const usdcDecimals = new BN(1_000_000) // USDC's 6 decimal fractional scale
 
-			if(finalPrice18Decimals.lt(zeroBN))
-				throw new Error(`The price can't be negative: ${finalPrice18Decimals}`)
+      //The Native Decimals are irrelevant here because Jupiter already gave us the USDC 
+      //value for EXACTLY tokenAmountSimulatedSold amount. 
+      //1. rawOutAmount (6 dec) * usdcTrueValue (18 dec) = 24 decimals of scale
+      //2. Divide by tokensSold (50) = USD value of exactly 1 token (still 24 decimals)
+      //3. Divide by usdcDecimals (1,000,000) to drop 6 zeroes and perfectly land at 18 decimals!
+      const finalPrice18Decimals = rawOutAmount.mul(usdcTrueValue).div(tokenAmountSimulatedSold).div(usdcDecimals)
 
-			normalizedPrices18Decimals.push(finalPrice18Decimals)
+      if(finalPrice18Decimals.lt(zeroBN))
+        throw new Error(`The price can't be negative: ${finalPrice18Decimals}`)
 
-			console.log(`Derived Unit Price Normalized: ${finalPrice18Decimals}`)
+      normalizedPrices18Decimals.push(finalPrice18Decimals)
+
+      //Pad string out to 19 characters to guarantee the slice logic functions cleanly below $1.00
+      const priceStringClean = finalPrice18Decimals.toString().padStart(19, '0')
+      const integerPart = priceStringClean.slice(0, -18)
+			const formatedIntegerPart = Number(integerPart).toLocaleString('en-US')
+      const decimalPart = priceStringClean.slice(-18)
+      console.log(`Price Normalized: $${formatedIntegerPart}.${decimalPart}`)
 		}
 		else
 		{
 			if(usdcTrueValue.lt(zeroBN))
 				throw new Error(`The price can't be negative: ${usdcTrueValue}`)
 
-			normalizedPrices18Decimals.push(usdcTrueValue)
-			console.log(`USDC value in USDS Normalized: ${usdcTrueValue}`)
+			//Pad string out to 19 characters to guarantee the slice logic functions cleanly below $1.00
+      const priceStringClean = usdcTrueValue.toString().padStart(19, '0')
+      const integerPart = priceStringClean.slice(0, -18)
+			const formatedIntegerPart = Number(integerPart).toLocaleString('en-US')
+      const decimalPart = priceStringClean.slice(-18)
+      console.log(`Price Normalized: $${formatedIntegerPart}.${decimalPart}`)
 		}
 	}
 
