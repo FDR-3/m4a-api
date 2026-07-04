@@ -11,13 +11,16 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-import { Keypair, VersionedTransaction, Transaction } from "@solana/web3.js"
+import { Keypair, VersionedTransaction, TransactionMessage, Transaction } from "@solana/web3.js"
 import { tokenDecimalHashMap,
 	tokenMintAddressHashMap,
 	tokenNamesHashMap,
 	tokenSellAmountsHashMap } from "./Tokens"
 import BN from "bn.js"
 import { getAnchorWorkSpace, validateIncomingTransactions } from "./AnchorWorkSpace"
+import { LOCAL_MODE } from "./EnvironmentSettings"
+import { searcher, bundle } from "jito-ts"
+import bs58 from "bs58"
 
 //Define your hardcoded fiat stablecoin basket anchors
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" //6 Decimals
@@ -80,12 +83,24 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 		console.log(`Current Calculated USDC Value: $${formatedIntegerPart}.${decimalPart}`)
 
 		//Query Jupiter V6 Routing Quotes for all other token values compared to USDC
-		const normalizedPrices18Decimals = await getUSDCPrices(tokenIds, usdcTrueValue, env)
-		
-		var data = []
+		const data = await getUSDCPrices(tokenIds, usdcTrueValue, env)
 
-		for(var i=0; i<tokenIds.length; i++)
-			data.push({ tokenId: tokenIds[i], normalizedPrice18Decimals: normalizedPrices18Decimals[i] })
+		/*Using api endpoint below instead of sdk since this wasn't working when deployed to cloud flare's server
+		var searcherClient
+
+		if(!LOCAL_MODE)
+		{
+			//Create the searcher client that will interact with Jito
+			searcherClient = searcher.searcherClient("ny.testnet.block-engine.jito.wtf")
+			//Subscribe to the bundle result
+			searcherClient.onBundleResult(
+				(result) => {
+				console.log("received bundle result:", result)
+			},
+			(e) => {
+				throw e
+			}
+		)*/
 
 		const slot = new BN(await program.provider.connection.getSlot("processed"))
 
@@ -101,42 +116,110 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
       .accounts({ lendingUserAddress: transactionSignerPubKey })
 			.instruction()
 
-		const priceTransaction = new Transaction
-		priceTransaction.add(createTempOraclePriceDataInstruction)
-
     const latestBlockhash = await program.provider.connection.getLatestBlockhash()
-    priceTransaction.recentBlockhash = latestBlockhash.blockhash
-    priceTransaction.feePayer = oracleKeypair.publicKey
 
-    //Oracle Signs the price data transaction
-    priceTransaction.sign(oracleKeypair)
-
-		console.log("price transaction size: ", priceTransaction.serialize().length)
-		await program.provider.connection.sendRawTransaction(priceTransaction.serialize(), { skipPreflight: false })
-
-		await timeOutFunction(0.4)
-	
-		var userTxs = []
-		for(var i=0; i<hydratedTransactions.length; i++)
+		const messageV0 = new TransactionMessage(
 		{
-			try 
-			{
-				userTxs[i] = await program.provider.connection.sendRawTransaction(hydratedTransactions[i].serialize(), { skipPreflight: false })
-				console.log(`Transaction submitted successfully. Signature: ${userTxs[i]}`)
-			}
-			catch(error: any)
-			{
-				throw(error)
-			}
-		}	
+			payerKey: oracleKeypair.publicKey,
+			recentBlockhash: latestBlockhash.blockhash,
+			instructions: [createTempOraclePriceDataInstruction]
+		}).compileToV0Message()
 
+		const tx = new VersionedTransaction(messageV0)
+
+		tx.sign([oracleKeypair])
+
+		console.log("\nprice transaction size: ", tx.serialize().length)
+
+		var resp
+
+		if(!LOCAL_MODE)
+		{
+			//1. Group the oracle tx and user txs (Max 5 total transactions)
+			const bundleTransactions = [tx, ...hydratedTransactions]
+
+			//2. Serialize and Base58 encode each transaction
+			const encodedTransactions = bundleTransactions.map(t => bs58.encode(t.serialize()))
+
+			//3. Send via standard fetch to Jito's REST API
+			const jitoResponse = await fetch('https://ny.testnet.block-engine.jito.wtf/api/v1/bundles', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: 1,
+					method: "sendBundle",
+					params: [
+						encodedTransactions
+					]
+				})
+			})
+
+			resp = await jitoResponse.json()
+
+			console.log(resp.result as String)
+			const jitoStatus = await fetch('https://ny.testnet.block-engine.jito.wtf/api/v1/bundles', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: 1,
+					method: "getBundleStatuses",
+					params: [
+						resp.result as String
+					]
+				})
+			})
+
+			const resp2 = await jitoStatus.json()
+
+			console.log("Jito REST Bundle Response:", resp)
+			console.log("Jito REST Bundle Response:", resp2)
+		}
+		else
+		{
+			const priceTransaction = new Transaction
+			priceTransaction.add(createTempOraclePriceDataInstruction)
+
+			priceTransaction.recentBlockhash = latestBlockhash.blockhash
+			priceTransaction.feePayer = oracleKeypair.publicKey
+
+			//Oracle Signs the price data transaction
+			priceTransaction.sign(oracleKeypair)
+
+			await program.provider.connection.sendRawTransaction(priceTransaction.serialize(), { skipPreflight: false })
+
+			await timeOutFunction(0.4)
+		
+			var userTxs = []
+			for(var i=0; i<hydratedTransactions.length; i++)
+			{
+				try 
+				{
+					userTxs[i] = await program.provider.connection.sendRawTransaction(hydratedTransactions[i].serialize(), { skipPreflight: false })
+					await timeOutFunction(0.4)
+					console.log(`Transaction submitted successfully. Signature: ${userTxs[i]}`)
+				}
+				catch(error: any)
+				{
+					throw(error)
+				}
+			}
+
+			resp = userTxs
+		}
+		
 		console.log("Oracle fetched prices successfully.")
 
 		//Serialize for JSON response
 		return new Response(
 			JSON.stringify(
 			{
-				userTxs
+				resp
 			}),
 			{
 				status: 200,
@@ -269,6 +352,7 @@ async function calculateUsdcTrueValue(env: any): Promise<BN>
 
 async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 {
+	var data = []
 	const priceCheckedHashMap = new Map<number, boolean>()//This is used to keep the server from getting tied up with a long array of the same Token Id's
 	const normalizedPrices18Decimals: BN[] = []
 	//Query Jupiter V6 Routing Quotes for all other token values compared to USDC
@@ -339,7 +423,7 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
       if(finalPrice18Decimals.lt(zeroBN))
         throw new Error(`The price can't be negative: ${finalPrice18Decimals}`)
 
-      normalizedPrices18Decimals.push(finalPrice18Decimals)
+			data.push({ tokenId: tokenId, normalizedPrice18Decimals: finalPrice18Decimals })
 
       //Pad string out to 19 characters to guarantee the slice logic functions cleanly below $1.00
       const priceStringClean = finalPrice18Decimals.toString().padStart(19, '0')
@@ -353,6 +437,8 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 			if(usdcTrueValue.lt(zeroBN))
 				throw new Error(`The price can't be negative: ${usdcTrueValue}`)
 
+			data.push({ tokenId: tokenId, normalizedPrice18Decimals: usdcTrueValue })
+
 			//Pad string out to 19 characters to guarantee the slice logic functions cleanly below $1.00
       const priceStringClean = usdcTrueValue.toString().padStart(19, '0')
       const integerPart = priceStringClean.slice(0, -18)
@@ -361,8 +447,8 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
       console.log(`Price Normalized: $${formatedIntegerPart}.${decimalPart}`)
 		}
 	}
-
-	return normalizedPrices18Decimals
+		
+	return data
 }
 
 /*function performED25519Signature(
@@ -397,14 +483,14 @@ async function timeOutFunction(timeToWaitInSeconds: number)
 	timeOutCountDown(timeToWaitInSeconds)
 
 	const timeToWaitInMilliSeconds = timeToWaitInSeconds * 1000
-	console.log("Sleeping for: " + timeToWaitInSeconds + " seconds")
+	console.log("\nSleeping for: " + timeToWaitInSeconds + " seconds")
 	await sleep(timeToWaitInMilliSeconds)
 }
 
 function timeOutCountDown(timeToWaitInSeconds: number)
 {
 	var timeLeftInSeconds = timeToWaitInSeconds
-	console.log(`${timeLeftInSeconds} Timeout Seconds Left`)
+	console.log(`\n${timeLeftInSeconds} Timeout Seconds Left`)
 
 	const countDownIntervalId = setInterval(() =>
 	{

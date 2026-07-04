@@ -2352,39 +2352,6 @@
       ],
       "accounts": [
         {
-          "name": "lending_user_address"
-        },
-        {
-          "name": "ceo",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  108,
-                  101,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  80,
-                  114,
-                  111,
-                  116,
-                  111,
-                  99,
-                  111,
-                  108,
-                  67,
-                  69,
-                  79
-                ]
-              }
-            ]
-          }
-        },
-        {
           "name": "price_validator",
           "pda": {
             "seeds": [
@@ -2443,7 +2410,7 @@
               },
               {
                 "kind": "account",
-                "path": "lending_user_address"
+                "path": "signer"
               }
             ]
           }
@@ -2459,6 +2426,107 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "create_lending_account",
+      "discriminator": [
+        166,
+        59,
+        241,
+        60,
+        203,
+        146,
+        187,
+        185
+      ],
+      "accounts": [
+        {
+          "name": "look_up_table_address"
+        },
+        {
+          "name": "lending_stats",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  83,
+                  116,
+                  97,
+                  116,
+                  115
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "lending_user_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  85,
+                  115,
+                  101,
+                  114,
+                  65,
+                  99,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "signer"
+              },
+              {
+                "kind": "arg",
+                "path": "user_account_index"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "user_account_index",
+          "type": "u8"
+        },
+        {
+          "name": "account_name",
+          "type": "string"
+        }
+      ]
     },
     {
       "name": "create_new_monthly_statement",
@@ -4468,18 +4536,6 @@
         {
           "name": "send_reward_to_wallet",
           "type": "bool"
-        },
-        {
-          "name": "account_name",
-          "type": {
-            "option": "string"
-          }
-        },
-        {
-          "name": "look_up_table_address",
-          "type": {
-            "option": "pubkey"
-          }
         }
       ]
     },
@@ -4956,18 +5012,6 @@
         {
           "name": "send_reward_to_wallet",
           "type": "bool"
-        },
-        {
-          "name": "account_name",
-          "type": {
-            "option": "string"
-          }
-        },
-        {
-          "name": "look_up_table_address",
-          "type": {
-            "option": "pubkey"
-          }
         }
       ]
     },
@@ -5577,18 +5621,6 @@
         {
           "name": "send_reward_to_wallet",
           "type": "bool"
-        },
-        {
-          "name": "account_name",
-          "type": {
-            "option": "string"
-          }
-        },
-        {
-          "name": "look_up_table_address",
-          "type": {
-            "option": "pubkey"
-          }
         }
       ]
     },
@@ -6575,6 +6607,94 @@
         {
           "name": "statement_year",
           "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "update_max_tab_amount",
+      "discriminator": [
+        49,
+        242,
+        167,
+        41,
+        175,
+        136,
+        48,
+        111
+      ],
+      "accounts": [
+        {
+          "name": "lending_protocol",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  80,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "ceo",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  80,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  67,
+                  69,
+                  79
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "new_max_tab_amount",
+          "type": "u8"
         }
       ]
     },
@@ -7617,6 +7737,10 @@
             "type": "u16"
           },
           {
+            "name": "max_tabs_per_lending_account",
+            "type": "u8"
+          },
+          {
             "name": "look_up_table_address",
             "type": "pubkey"
           }
@@ -7643,6 +7767,10 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "user_accounts",
+            "type": "u64"
           },
           {
             "name": "deposits",
@@ -7797,7 +7925,7 @@
             "type": "u64"
           },
           {
-            "name": "monthly_sub_market_fees_generated_amount",
+            "name": "fees_generated_amount",
             "type": "u64"
           },
           {
@@ -7805,15 +7933,7 @@
             "type": "u64"
           },
           {
-            "name": "monthly_solvency_insurance_fees_generated_amount",
-            "type": "u64"
-          },
-          {
             "name": "monthly_solvency_insurance_fees_collected_amount",
-            "type": "u64"
-          },
-          {
-            "name": "monthly_liquidation_fees_generated_amount",
             "type": "u64"
           },
           {
@@ -7925,27 +8045,7 @@
             "type": "u64"
           },
           {
-            "name": "sub_market_fees_generated_amount",
-            "type": "u64"
-          },
-          {
-            "name": "sub_market_fees_collected_amount",
-            "type": "u64"
-          },
-          {
-            "name": "solvency_insurance_fees_generated_amount",
-            "type": "u64"
-          },
-          {
-            "name": "solvency_insurance_fees_collected_amount",
-            "type": "u64"
-          },
-          {
-            "name": "liquidation_fees_generated_amount",
-            "type": "u64"
-          },
-          {
-            "name": "liquidation_fees_collected_amount",
+            "name": "fees_generated_amount",
             "type": "u64"
           },
           {
@@ -8257,23 +8357,11 @@
             "type": "u128"
           },
           {
-            "name": "sub_market_fees_generated_amount",
-            "type": "u128"
-          },
-          {
             "name": "solvency_insurance_fee_rate",
             "type": "u16"
           },
           {
-            "name": "solvency_insurance_fees_generated_amount",
-            "type": "u128"
-          },
-          {
             "name": "uncollected_solvency_insurance_fees_amount",
-            "type": "u128"
-          },
-          {
-            "name": "liquidation_fees_generated_amount",
             "type": "u128"
           },
           {

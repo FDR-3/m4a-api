@@ -21,6 +21,7 @@
 		"@coral-xyz/anchor": "^0.32.1",
 		"@solana/web3.js": "^1.98.4",
 		"Buffer": "^0.0.0",
+		"jito-ts": "^4.2.1",
 		"tweetnacl": "^1.0.3"
 	},
 	"allowScripts": {

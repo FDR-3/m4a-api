@@ -1,6 +1,7 @@
 import * as anchor from "@coral-xyz/anchor"
 import * as idl from "./LendingProtocol.json"
 import { Connection, Keypair, VersionedTransaction, TransactionMessage, AddressLookupTableAccount } from "@solana/web3.js"
+import { LOCAL_MODE } from "./EnvironmentSettings"
 
 let anchorProgramInstance: anchor.Program | null = null
 
@@ -13,8 +14,11 @@ export function getAnchorWorkSpace(env: any): anchor.Program
   const oracleKeypair = Keypair.fromSecretKey(new Uint8Array(secretKeyArray))
 
   //Set up connection using your env variables
-  //const connection = new Connection("http://127.0.0.1:8899", "processed")
-  const connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
+  var connection: Connection
+  if(LOCAL_MODE)
+    connection = new Connection("http://127.0.0.1:8899", "processed")
+  else
+    connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
 
   //browser-safe mock Wallet interface matching Anchor's expectations
   const edgeSafeWallet =
