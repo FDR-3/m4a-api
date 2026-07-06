@@ -1,5 +1,5 @@
 {
-  "address": "3znBMZEVoRv2pjByoinxVjnuPduCvgvmkupuSRyA1fo9",
+  "address": "HPSRDRBK5tr9o4gcFzsEZaNLutMqf4SLRdj1BBri3KWa",
   "metadata": {
     "name": "lending_protocol",
     "version": "0.1.0",
@@ -2428,107 +2428,6 @@
       "args": []
     },
     {
-      "name": "create_lending_account",
-      "discriminator": [
-        166,
-        59,
-        241,
-        60,
-        203,
-        146,
-        187,
-        185
-      ],
-      "accounts": [
-        {
-          "name": "look_up_table_address"
-        },
-        {
-          "name": "lending_stats",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  108,
-                  101,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  83,
-                  116,
-                  97,
-                  116,
-                  115
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "lending_user_account",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  108,
-                  101,
-                  110,
-                  100,
-                  105,
-                  110,
-                  103,
-                  85,
-                  115,
-                  101,
-                  114,
-                  65,
-                  99,
-                  99,
-                  111,
-                  117,
-                  110,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "signer"
-              },
-              {
-                "kind": "arg",
-                "path": "user_account_index"
-              }
-            ]
-          }
-        },
-        {
-          "name": "signer",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "user_account_index",
-          "type": "u8"
-        },
-        {
-          "name": "account_name",
-          "type": "string"
-        }
-      ]
-    },
-    {
       "name": "create_new_monthly_statement",
       "discriminator": [
         164,
@@ -4536,6 +4435,18 @@
         {
           "name": "send_reward_to_wallet",
           "type": "bool"
+        },
+        {
+          "name": "account_name",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "look_up_table_address",
+          "type": {
+            "option": "pubkey"
+          }
         }
       ]
     },
@@ -5012,6 +4923,18 @@
         {
           "name": "send_reward_to_wallet",
           "type": "bool"
+        },
+        {
+          "name": "account_name",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "look_up_table_address",
+          "type": {
+            "option": "pubkey"
+          }
         }
       ]
     },
@@ -5621,6 +5544,18 @@
         {
           "name": "send_reward_to_wallet",
           "type": "bool"
+        },
+        {
+          "name": "account_name",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "look_up_table_address",
+          "type": {
+            "option": "pubkey"
+          }
         }
       ]
     },
@@ -7767,10 +7702,6 @@
           {
             "name": "bump",
             "type": "u8"
-          },
-          {
-            "name": "user_accounts",
-            "type": "u64"
           },
           {
             "name": "deposits",
