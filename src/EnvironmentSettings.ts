@@ -1,1 +1,1 @@
-export const LOCAL_MODE = true
+export const USE_JITO_BUNDLES = true

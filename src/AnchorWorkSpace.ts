@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor"
 import * as idl from "./LendingProtocol.json"
 import { Connection, Keypair, VersionedTransaction, TransactionMessage, AddressLookupTableAccount } from "@solana/web3.js"
-import { LOCAL_MODE } from "./EnvironmentSettings"
+import { USE_JITO_BUNDLES } from "./EnvironmentSettings"
 
 let anchorProgramInstance: anchor.Program | null = null
 
@@ -15,10 +15,14 @@ export function getAnchorWorkSpace(env: any): anchor.Program
 
   //Set up connection using your env variables
   var connection: Connection
-  if(LOCAL_MODE)
-    connection = new Connection("http://127.0.0.1:8899", "processed")
-  else
+  if(USE_JITO_BUNDLES)
+    //connection = new Connection("https://devnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
     connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
+    
+  else
+    connection = new Connection("https://devnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
+    //connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
+    //connection = new Connection("http://127.0.0.1:8899", "processed")
 
   //browser-safe mock Wallet interface matching Anchor's expectations
   const edgeSafeWallet =
@@ -26,7 +30,7 @@ export function getAnchorWorkSpace(env: any): anchor.Program
     publicKey: oracleKeypair.publicKey,
     signTransaction: async (tx: any) =>
 		{
-      // If anchor ever tries an internal provider sign, handle it here
+      //If anchor ever tries an internal provider sign, handle it here
       if('sign' in tx)
         tx.sign([oracleKeypair])
       return tx
@@ -182,28 +186,28 @@ export function validateIncomingTransactions(txs: VersionedTransaction[], progra
 }
 
 export async function createVersionedTransaction(instructions: anchor.web3.TransactionInstruction[], lookUpTables: AddressLookupTableAccount[])
+{
+  try
   {
-    try
+    if(!anchorProgramInstance || !anchorProgramInstance.provider.publicKey)
+      return
+
+    const { blockhash } = await anchorProgramInstance.provider.connection.getLatestBlockhash()
+
+    const messageV0 = new TransactionMessage(
     {
-      if(!anchorProgramInstance || !anchorProgramInstance.provider.publicKey)
-        return
+      payerKey: anchorProgramInstance.provider.publicKey,
+      recentBlockhash: blockhash,
+      instructions: instructions
+    }).compileToV0Message(lookUpTables)
 
-      const { blockhash } = await anchorProgramInstance.provider.connection.getLatestBlockhash()
+    //Create Versioned Transaction
+    const transaction = new VersionedTransaction(messageV0)
 
-      const messageV0 = new TransactionMessage(
-      {
-        payerKey: anchorProgramInstance.provider.publicKey,
-        recentBlockhash: blockhash,
-        instructions: instructions
-      }).compileToV0Message(lookUpTables)
-
-      //Create Versioned Transaction
-      const transaction = new VersionedTransaction(messageV0)
-
-      return transaction
-    }
-    catch(error)
-    {
-      throw error
-    }
+    return transaction
   }
+  catch(error)
+  {
+    throw error
+  }
+}

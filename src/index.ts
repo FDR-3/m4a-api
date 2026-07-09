@@ -18,9 +18,8 @@ import { tokenDecimalHashMap,
 	tokenSellAmountsHashMap } from "./Tokens"
 import BN from "bn.js"
 import { getAnchorWorkSpace, validateIncomingTransactions } from "./AnchorWorkSpace"
-import { LOCAL_MODE } from "./EnvironmentSettings"
-import { searcher, bundle } from "jito-ts"
-import bs58 from "bs58"
+import { USE_JITO_BUNDLES } from "./EnvironmentSettings"
+//import { searcher, bundle } from "jito-ts"
 
 //Define your hardcoded fiat stablecoin basket anchors
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" //6 Decimals
@@ -88,7 +87,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 		/*Using api endpoint below instead of sdk since this wasn't working when deployed to cloud flare's server
 		var searcherClient
 
-		if(!LOCAL_MODE)
+		if(!USE_JITO_BUNDLES)
 		{
 			//Create the searcher client that will interact with Jito
 			searcherClient = searcher.searcherClient("ny.testnet.block-engine.jito.wtf")
@@ -102,6 +101,10 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 			}
 		)*/
 
+		var response: any
+		const secretKeyArray = JSON.parse(env.ORACLE_SECRET_KEY)
+  	const oracleKeypair = Keypair.fromSecretKey(new Uint8Array(secretKeyArray))
+
 		const slot = new BN(await program.provider.connection.getSlot("processed"))
 
 		const payload =
@@ -109,9 +112,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 			data,
 			slot
 		}
-		const secretKeyArray = JSON.parse(env.ORACLE_SECRET_KEY)
-  	const oracleKeypair = Keypair.fromSecretKey(new Uint8Array(secretKeyArray))
-
+		
 		const createTempOraclePriceDataInstruction = await program.methods.createTempOraclePriceData(payload)
       .accounts({ lendingUserAddress: transactionSignerPubKey })
 			.instruction()
@@ -125,24 +126,25 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 			instructions: [createTempOraclePriceDataInstruction]
 		}).compileToV0Message()
 
-		const tx = new VersionedTransaction(messageV0)
+		const priceTransaction = new VersionedTransaction(messageV0)
 
-		tx.sign([oracleKeypair])
+		priceTransaction.sign([oracleKeypair])
 
-		console.log("\nprice transaction size: ", tx.serialize().length)
+		console.log("\nprice transaction size: ", priceTransaction.serialize().length)
 
-		var resp
-
-		if(!LOCAL_MODE)
+		if(USE_JITO_BUNDLES)
 		{
 			//1. Group the oracle tx and user txs (Max 5 total transactions)
-			const bundleTransactions = [tx, ...hydratedTransactions]
+			const bundleTransactions = [priceTransaction, ...hydratedTransactions]
 
 			//2. Serialize and Base58 encode each transaction
-			const encodedTransactions = bundleTransactions.map(t => bs58.encode(t.serialize()))
-
+			const encodedTransactions = new Array(bundleTransactions.length)
+			for(let i=0; i<bundleTransactions.length; i++)
+				encodedTransactions[i] = Buffer.from(bundleTransactions[i].serialize()).toString('base64')
+    
 			//3. Send via standard fetch to Jito's REST API
-			const jitoResponse = await fetch('https://ny.testnet.block-engine.jito.wtf/api/v1/bundles', {
+			const jitoResponse = await fetch('https://ny.testnet.block-engine.jito.wtf/api/v1/bundles',
+			{
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -151,15 +153,19 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 					jsonrpc: "2.0",
 					id: 1,
 					method: "sendBundle",
-					params: [
-						encodedTransactions
+					params:
+					[
+						encodedTransactions,
+						{
+							"encoding": "base64"
+						}
 					]
 				})
 			})
 
-			resp = await jitoResponse.json()
+			response = await jitoResponse.json()
 
-			console.log(resp.result as String)
+			console.log(response.result as String)
 			const jitoStatus = await fetch('https://ny.testnet.block-engine.jito.wtf/api/v1/bundles', {
 				method: 'POST',
 				headers: {
@@ -169,31 +175,21 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 					jsonrpc: "2.0",
 					id: 1,
 					method: "getBundleStatuses",
-					params: [
-						resp.result as String
-					]
+					params: [[response.result as String]]
 				})
 			})
 
-			const resp2 = await jitoStatus.json()
+			const getBundleStatusesResponse = await jitoStatus.json()
 
-			console.log("Jito REST Bundle Response:", resp)
-			console.log("Jito REST Bundle Response:", resp2)
+			console.log("Jito sendBundle Response:", response)
+			console.log("Jito getBundleStatuses Response:", getBundleStatusesResponse)
 		}
 		else
 		{
-			const priceTransaction = new Transaction
-			priceTransaction.add(createTempOraclePriceDataInstruction)
-
-			priceTransaction.recentBlockhash = latestBlockhash.blockhash
-			priceTransaction.feePayer = oracleKeypair.publicKey
-
-			//Oracle Signs the price data transaction
-			priceTransaction.sign(oracleKeypair)
-
 			await program.provider.connection.sendRawTransaction(priceTransaction.serialize(), { skipPreflight: false })
 
-			await timeOutFunction(0.4)
+			//Time out to ensure transactions land in correct order when testing without bundles
+			await timeOutFunction(1)
 		
 			var userTxs = []
 			for(var i=0; i<hydratedTransactions.length; i++)
@@ -201,7 +197,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 				try 
 				{
 					userTxs[i] = await program.provider.connection.sendRawTransaction(hydratedTransactions[i].serialize(), { skipPreflight: false })
-					await timeOutFunction(0.4)
+					await timeOutFunction(0.4)//Time out to ensure transactions land in correct order when testing without bundles
 					console.log(`Transaction submitted successfully. Signature: ${userTxs[i]}`)
 				}
 				catch(error: any)
@@ -210,7 +206,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 				}
 			}
 
-			resp = userTxs
+			response = userTxs
 		}
 		
 		console.log("Oracle fetched prices successfully.")
@@ -219,7 +215,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 		return new Response(
 			JSON.stringify(
 			{
-				resp
+				response
 			}),
 			{
 				status: 200,
