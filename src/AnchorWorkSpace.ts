@@ -222,6 +222,16 @@ export async function confirmTransactionPolling(
 {
   const startTime = Date.now()
   
+  // Map Solana's commitment levels to numerical weights for comparison
+  const weights: Record<string, number> = 
+  { 
+    'processed': 1, 
+    'confirmed': 2, 
+    'finalized': 3 
+  }
+
+  const targetWeight = weights[commitment] || 1
+
   while(true)
   {
     //1. Check for a safety timeout (e.g., 25s) to avoid hitting Cloudflare's hard 30s limit
@@ -238,9 +248,10 @@ export async function confirmTransactionPolling(
         throw status.err
 
       const confirmationStatus = status.confirmationStatus
+      const currentWeight = confirmationStatus ? (weights[confirmationStatus] || 0) : 0
 
-      //Accept if we've met or exceeded our target commitment
-      if(confirmationStatus === commitment || confirmationStatus === 'confirmed' || confirmationStatus === 'finalized')
+      //Only accept if the current weight meets or exceeds our target weight
+      if(currentWeight >= targetWeight)
         return
     }
 
