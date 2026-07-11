@@ -20,8 +20,8 @@ export function getAnchorWorkSpace(env: any): anchor.Program
     connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
     
   else
-    connection = new Connection("https://devnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
-    //connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
+    //connection = new Connection("https://devnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
+    connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
     //connection = new Connection("http://127.0.0.1:8899", "processed")
 
   //browser-safe mock Wallet interface matching Anchor's expectations
@@ -209,5 +209,47 @@ export async function createVersionedTransaction(instructions: anchor.web3.Trans
   catch(error)
   {
     throw error
+  }
+}
+
+//Robust HTTP polling confirmation helper for Serverless/Cloudflare Workers
+export async function confirmTransactionPolling(
+  connection: anchor.web3.Connection,
+  signature: string,
+  lastValidBlockHeight: number,
+  commitment: anchor.web3.Commitment = 'processed'
+): Promise<void>
+{
+  const startTime = Date.now()
+  
+  while(true)
+  {
+    //1. Check for a safety timeout (e.g., 25s) to avoid hitting Cloudflare's hard 30s limit
+    if(Date.now() - startTime > 25000)
+      throw new Error("Transaction confirmation timed out via polling helper.")
+
+    //2. Fetch signature status using standard HTTP POST
+    const response = await connection.getSignatureStatuses([signature])
+    const status = response && response.value && response.value[0]
+
+    if(status)
+    {
+      if(status.err)
+        throw status.err
+
+      const confirmationStatus = status.confirmationStatus
+
+      //Accept if we've met or exceeded our target commitment
+      if(confirmationStatus === commitment || confirmationStatus === 'confirmed' || confirmationStatus === 'finalized')
+        return
+    }
+
+    //3. Fallback: check block height to verify if the blockhash has expired on-chain
+    const currentBlockHeight = await connection.getBlockHeight()
+    if(currentBlockHeight > lastValidBlockHeight)
+      throw new Error("Transaction expired. Block height exceeded lastValidBlockHeight.")
+
+    //4. Delay 1.5 seconds between poll attempts to prevent RPC rate-limits
+    await new Promise(resolve => setTimeout(resolve, 1500))
   }
 }

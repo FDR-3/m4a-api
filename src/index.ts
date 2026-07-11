@@ -17,7 +17,7 @@ import { tokenDecimalHashMap,
 	tokenNamesHashMap,
 	tokenSellAmountsHashMap } from "./Tokens"
 import BN from "bn.js"
-import { getAnchorWorkSpace, validateIncomingTransactions } from "./AnchorWorkSpace"
+import { getAnchorWorkSpace, validateIncomingTransactions, confirmTransactionPolling } from "./AnchorWorkSpace"
 import { USE_JITO_BUNDLES } from "./EnvironmentSettings"
 //import { searcher, bundle } from "jito-ts"
 
@@ -35,14 +35,16 @@ export default
 		if(request.method === 'OPTIONS')
 		{
 			return new Response(null,
-			{
-				headers:
-				{
-					'Access-Control-Allow-Origin': '*',
-					'Access-Control-Allow-Methods': 'POST, OPTIONS',
-					'Access-Control-Allow-Headers': 'Content-Type',
-				},
-			})
+      {
+        headers:
+        {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          //Explicitly accept any headers requested by the client (such as content-type)
+          'Access-Control-Allow-Headers': request.headers.get('Access-Control-Request-Headers') || 'Content-Type, Accept',
+          'Access-Control-Max-Age': '86400', //Cache preflight for 24 hours to reduce latency!
+        },
+      })
 		}
 
 		const url = new URL(request.url)
@@ -132,10 +134,13 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 
 		console.log("\nprice transaction size: ", priceTransaction.serialize().length)
 
-		if(USE_JITO_BUNDLES)
+		if(USE_JITO_BUNDLES && hydratedTransactions.length > 1)
 		{
 			//1. Group the oracle tx and user txs (Max 5 total transactions)
 			const bundleTransactions = [priceTransaction, ...hydratedTransactions]
+
+			if(bundleTransactions.length > 5)
+				throw new Error(`Bundle transaction length was greater than 5: ${bundleTransactions.length}`)
 
 			//2. Serialize and Base58 encode each transaction
 			const encodedTransactions = new Array(bundleTransactions.length)
@@ -143,6 +148,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 				encodedTransactions[i] = Buffer.from(bundleTransactions[i].serialize()).toString('base64')
     
 			//3. Send via standard fetch to Jito's REST API
+			console.log("Sending off Jito Bundle")
 			const jitoResponse = await fetch('https://ny.testnet.block-engine.jito.wtf/api/v1/bundles',
 			{
 				method: 'POST',
@@ -163,9 +169,9 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 				})
 			})
 
-			response = await jitoResponse.json()
+			const getBundleResponse: any = await jitoResponse.json()
 
-			console.log(response.result as String)
+			console.log(getBundleResponse.result as String)
 			const jitoStatus = await fetch('https://ny.testnet.block-engine.jito.wtf/api/v1/bundles', {
 				method: 'POST',
 				headers: {
@@ -175,29 +181,45 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 					jsonrpc: "2.0",
 					id: 1,
 					method: "getBundleStatuses",
-					params: [[response.result as String]]
+					params: [[getBundleResponse.result as String]]
 				})
 			})
 
 			const getBundleStatusesResponse = await jitoStatus.json()
+			response = { getBundleResponse, getBundleStatusesResponse }
 
 			console.log("Jito sendBundle Response:", response)
 			console.log("Jito getBundleStatuses Response:", getBundleStatusesResponse)
 		}
 		else
 		{
-			await program.provider.connection.sendRawTransaction(priceTransaction.serialize(), { skipPreflight: false })
+			console.log("Sending off Temp Price Transaction")
+			
+			const priceTX = await program.provider.connection.sendRawTransaction(priceTransaction.serialize(), { skipPreflight: true })
+			const { lastValidBlockHeight } = await program.provider.connection.getLatestBlockhash()
 
-			//Time out to ensure transactions land in correct order when testing without bundles
-			await timeOutFunction(1)
+			await confirmTransactionPolling(
+        program.provider.connection,
+        priceTX,
+        lastValidBlockHeight,
+        "processed"
+      )
 		
 			var userTxs = []
 			for(var i=0; i<hydratedTransactions.length; i++)
 			{
 				try 
 				{
-					userTxs[i] = await program.provider.connection.sendRawTransaction(hydratedTransactions[i].serialize(), { skipPreflight: false })
-					await timeOutFunction(0.4)//Time out to ensure transactions land in correct order when testing without bundles
+					console.log(`Sending off User Transaction(s) ${i+1} of ${hydratedTransactions.length}`)
+					userTxs[i] = await program.provider.connection.sendRawTransaction(hydratedTransactions[i].serialize(), { skipPreflight: true })
+					
+					await confirmTransactionPolling(
+						program.provider.connection,
+						userTxs[i],
+						lastValidBlockHeight,
+						"processed"
+					)
+					
 					console.log(`Transaction submitted successfully. Signature: ${userTxs[i]}`)
 				}
 				catch(error: any)
@@ -209,7 +231,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 			response = userTxs
 		}
 		
-		console.log("Oracle fetched prices successfully.")
+		console.log("✅ Oracle fetched prices successfully.")
 
 		//Serialize for JSON response
 		return new Response(
