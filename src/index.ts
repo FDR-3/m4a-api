@@ -196,8 +196,8 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 			console.log("Sending off Temp Price Transaction")
 			
 			const priceTX = await program.provider.connection.sendRawTransaction(priceTransaction.serialize(), { skipPreflight: true })
+			
 			const { lastValidBlockHeight } = await program.provider.connection.getLatestBlockhash()
-
 			await confirmTransactionPolling(
         program.provider.connection,
         priceTX,
@@ -213,6 +213,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 					console.log(`Sending off User Transaction(s) ${i+1} of ${hydratedTransactions.length}`)
 					userTxs[i] = await program.provider.connection.sendRawTransaction(hydratedTransactions[i].serialize(), { skipPreflight: true })
 					
+					const { lastValidBlockHeight } = await program.provider.connection.getLatestBlockhash()
 					await confirmTransactionPolling(
 						program.provider.connection,
 						userTxs[i],

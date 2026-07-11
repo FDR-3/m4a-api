@@ -217,17 +217,17 @@ export async function confirmTransactionPolling(
   connection: anchor.web3.Connection,
   signature: string,
   lastValidBlockHeight: number,
-  commitment: anchor.web3.Commitment = 'processed'
+  commitment: anchor.web3.Commitment = "processed"
 ): Promise<void>
 {
   const startTime = Date.now()
   
-  // Map Solana's commitment levels to numerical weights for comparison
+  //Map Solana's commitment levels to numerical weights for comparison
   const weights: Record<string, number> = 
   { 
-    'processed': 1, 
-    'confirmed': 2, 
-    'finalized': 3 
+    "processed": 1, 
+    "confirmed": 2, 
+    "finalized": 3 
   }
 
   const targetWeight = weights[commitment] || 1
