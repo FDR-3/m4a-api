@@ -11,13 +11,13 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-import { Keypair, VersionedTransaction, TransactionMessage, Transaction } from "@solana/web3.js"
+import { Keypair, VersionedTransaction, TransactionMessage } from "@solana/web3.js"
 import { tokenDecimalHashMap,
 	tokenMintAddressHashMap,
 	tokenNamesHashMap,
 	tokenSellAmountsHashMap } from "./Tokens"
 import BN from "bn.js"
-import { getAnchorWorkSpace, validateIncomingTransactions, confirmTransactionPolling } from "./AnchorWorkSpace"
+import { getAnchorWorkSpace, validateIncomingTransactions, confirmTransactionPolling, parseProgramErrorCode } from "./AnchorWorkSpace"
 import { USE_JITO_BUNDLES } from "./EnvironmentSettings"
 //import { searcher, bundle } from "jito-ts"
 
@@ -65,12 +65,14 @@ export default
 
 async function bundleProtocolPriceTransactions(request: Request, env: any): Promise<Response>
 {
+	const program = getAnchorWorkSpace(env)
+
 	try
 	{
 		//Grab the raw binary array directly from the request strea
     const [tokenIds, hydratedTransactions] = await getTokenIdsAndSignedTransactionsFromMessageBuffer(request)
 
-		const program = getAnchorWorkSpace(env)
+		
 		const transactionSignerPubKey = validateIncomingTransactions(hydratedTransactions, program)
 		console.log("transactionSignerPubKey: ", transactionSignerPubKey.toBase58())
 		
@@ -252,12 +254,13 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 	}
 	catch(error: any)
 	{
-		console.error(error)
+		var errorMessage = parseProgramErrorCode(error, program)
+		console.error(errorMessage)
 
 		return new Response(
 			JSON.stringify(
 			{
-				error: error.message || 'Failed to generate M4A Verified Price'
+				error: errorMessage || 'Failed to generate M4A Verified Price'
 			}),
 			{
 				status: 500,

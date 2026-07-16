@@ -264,3 +264,40 @@ export async function confirmTransactionPolling(
     await new Promise(resolve => setTimeout(resolve, 1500))
   }
 }
+
+export function parseProgramErrorCode(error: any, program: any)
+{
+  var errorCode = 0
+  var errorMessage = ""
+  var idlError = null
+
+  if(error.InstructionError)
+    if(error.InstructionError[1])
+      if(error.InstructionError[1].Custom)
+        errorCode = error.InstructionError[1].Custom
+      else
+        errorMessage = error.InstructionError[1]
+
+  if(error.message)
+  {
+    errorMessage = error.message
+    const errorMatch1 = error.message.match(/Error Number: (\d+)/)
+    const errorMatch2 = error.message.match(/"Custom":(\d+)/)
+    
+    if(errorMatch1)
+      if(errorMatch1[1])
+        idlError = program.idl.errors.find((error: { code: number }) => error.code === parseInt(errorMatch1[1]))
+    else if(errorMatch2)
+      if(errorMatch2[1])
+        idlError = program.idl.errors.find((error: { code: number }) => error.code === parseInt(errorMatch2[1]))
+  }
+  else if(errorCode)
+    idlError = program.idl.errors.find((error: { code: number }) => error.code === errorCode)
+
+  if(idlError)
+    errorMessage = idlError.msg
+  else if(errorMessage == "")
+    errorMessage = error
+  
+  return errorMessage
+}
