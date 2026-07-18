@@ -1,5 +1,5 @@
 {
-  "address": "AymeZTGqtjkaHVhDCpdfby1G9YkTn8EMPSQMRdGVjJSA",
+  "address": "LendhZxPC1nipFNU6XDTuCjMDCQ2dcY3xMuUJWDLJJN",
   "metadata": {
     "name": "lending_protocol",
     "version": "0.1.0",
@@ -7509,7 +7509,7 @@
     {
       "code": 6009,
       "name": "InvalidSolvencyInsuranceFeeRate",
-      "msg": "The solvency insurance fee on interest earned rate can't be greater than 100%"
+      "msg": "The solvency insurance fee on interest earned rate can't be greater than 4%"
     },
     {
       "code": 6010,
