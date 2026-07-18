@@ -397,7 +397,7 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 
 		if(tokenMintAddress !== USDC_MINT)
 		{
-			const sellTokenDecimals =  tokenDecimalHashMap.get(tokenMintAddress)
+			const sellTokenDecimals =  tokenDecimalHashMap.get(tokenId)
 			if(!sellTokenDecimals)
 				throw new Error(`Decimal entry not found in hash map for token: ${tokenMintAddress}`)
 

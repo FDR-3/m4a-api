@@ -4,6 +4,15 @@ const SOL_MAINNET_TOKEN_MINT_ADDRESS = "So11111111111111111111111111111111111111
 const WETH_MAINNET_TOKEN_MINT_ADDRESS = "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs"
 const WBTC_MAINNET_TOKEN_MINT_ADDRESS = "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh"
 
+const tokenIds = 
+{
+  usdsTokenId: 1,
+  usdcTokenId: 2,
+  solTokenId: 3,
+  wethTokenId: 4,
+  wbtcTokenId: 5
+}
+
 export const tokenAddressStrings = 
 {
   usdsTokenMintAddress: USDS_MAINNET_TOKEN_MINT_ADDRESS,
@@ -13,42 +22,42 @@ export const tokenAddressStrings =
   wbtcTokenMintAddress: WBTC_MAINNET_TOKEN_MINT_ADDRESS
 }
 
-export const tokenDecimalHashMap: Map<string, number> = new Map(
+export const tokenDecimalHashMap: Map<number, number> = new Map(
 [
   //Key: Token Mint Address, Value: Token Decimal Amount
-  [tokenAddressStrings.usdsTokenMintAddress, 6],
-  [tokenAddressStrings.usdcTokenMintAddress,6],
-  [tokenAddressStrings.solTokenMintAddress, 9],
-  [tokenAddressStrings.wethTokenMintAddress,8],
-  [tokenAddressStrings.wbtcTokenMintAddress,8]
+  [tokenIds.usdsTokenId, 6],
+  [tokenIds.usdcTokenId,6],
+  [tokenIds.solTokenId, 9],
+  [tokenIds.wethTokenId,8],
+  [tokenIds.wbtcTokenId,8]
 ])
 
 export const tokenMintAddressHashMap: Map<number, string> = new Map(
 [
   //Key: Token ID, Value: Token Mint Address
-  [1, "So11111111111111111111111111111111111111112"], //SOL
-  [2, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"], //USDC
-  [3, "USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA"], //USDS
-  [4, "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs"], //WEth
-  [5, "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh"] //WBtc
+  [tokenIds.usdsTokenId, tokenAddressStrings.usdsTokenMintAddress], //USDS
+  [tokenIds.usdcTokenId, tokenAddressStrings.usdcTokenMintAddress], //USDC
+  [tokenIds.solTokenId, tokenAddressStrings.solTokenMintAddress], //SOL
+  [tokenIds.wethTokenId, tokenAddressStrings.wethTokenMintAddress], //WEth
+  [tokenIds.wbtcTokenId, tokenAddressStrings.wbtcTokenMintAddress] //WBtc
 ])
 
 export const tokenNamesHashMap: Map<number, string> = new Map(
 [
-  //Key: Token ID, Value: Token Mint Address
-  [1, "SOL"], //SOL
-  [2, "USDC"], //USDC
-  [3, "USDS"], //USDS
-  [4, "WEth"], //WEth
-  [5, "WBtc"] //WBtc
+  //Key: Token ID, Value: Token Name
+  [tokenIds.usdsTokenId, "USDS"], //USDS
+  [tokenIds.usdcTokenId, "USDC"], //USDC
+  [tokenIds.solTokenId,  "SOL"], //SOL
+  [tokenIds.wethTokenId, "WEth"], //WEth
+  [tokenIds.wbtcTokenId, "WBtc"] //WBtc
 ])
 
 export const tokenSellAmountsHashMap: Map<number, number> = new Map(
 [
-  //Key: Token ID, Value: Token Mint Address
-  [1, 500], //SOL
-  //[2, 100], //USDC get it's price from it's own function
-  [3, 10000], //USDS
-  [4, 50], //WEth
-  [5, 5] //WBtc
+  //Key: Token ID, Value: Token Simulate Sell Amount
+  [tokenIds.usdsTokenId, 10000], //USDS
+  //[tokenIds.usdcTokenId, 10000], //USDC get it's price from it's own function
+  [tokenIds.solTokenId,  500], //SOL
+  [tokenIds.wethTokenId, 50], //WEth
+  [tokenIds.wbtcTokenId, 5] //WBtc
 ])
