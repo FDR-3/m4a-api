@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor"
 import * as idl from "./LendingProtocol.json"
 import { Connection, Keypair, VersionedTransaction, TransactionMessage, AddressLookupTableAccount } from "@solana/web3.js"
-import { USE_JITO_BUNDLES } from "./EnvironmentSettings"
+import { DEV_MODE } from "./EnvironmentSettings"
 
 let anchorProgramInstance: anchor.Program | null = null
 
@@ -15,13 +15,11 @@ export function getAnchorWorkSpace(env: any): anchor.Program
 
   //Set up connection using your env variables
   var connection: Connection
-  if(USE_JITO_BUNDLES)
-    //connection = new Connection("https://devnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
-    connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
-    
+  if(DEV_MODE)
+    connection = new Connection("https://devnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
   else
-    //connection = new Connection("https://devnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
-    connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
+    connection = new Connection("https://mainnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
+    //connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
     //connection = new Connection("http://127.0.0.1:8899", "processed")
 
   //browser-safe mock Wallet interface matching Anchor's expectations

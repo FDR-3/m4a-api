@@ -10,7 +10,7 @@
 		"cf-typegen": "wrangler types"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.16.15",
+		"@cloudflare/vitest-pool-workers": "^0.18.8",
 		"@types/bn.js": "^5.2.0",
 		"@types/node": "^25.3.0",
 		"typescript": "^5.5.2",
@@ -26,7 +26,7 @@
 	"allowScripts": {
 		"bufferutil@4.1.0": true,
 		"esbuild@0.28.1": true,
-		"sharp@0.34.5": true,
+		"sharp@0.35.0": true,
 		"utf-8-validate@6.0.6": true,
 		"workerd@1.20260625.1": true
 	},
