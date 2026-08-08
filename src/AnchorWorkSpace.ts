@@ -16,11 +16,12 @@ export function getAnchorWorkSpace(env: any): anchor.Program
   //Set up connection using your env variables
   var connection: Connection
   if(DEV_MODE)
-    connection = new Connection("https://devnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
+    //connection = new Connection("https://api.testnet.solana.com", "processed")
+    connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
+    //connection = new Connection("http://127.0.0.1:8899", "processed")
   else
     connection = new Connection("https://mainnet.helius-rpc.com/?api-key=" + env.HELIUS_API_KEY, "processed")
-    //connection = new Connection(env.QUICK_NODE_TEST_URL, "processed")
-    //connection = new Connection("http://127.0.0.1:8899", "processed")
+    
 
   //browser-safe mock Wallet interface matching Anchor's expectations
   const edgeSafeWallet =
@@ -147,15 +148,65 @@ export function validateIncomingTransactions(txs: VersionedTransaction[], progra
 
     if(currentIx.name === "refreshUserHealthChunkAndTokenReserves")
     {
-      //Anchor decodes snake_case parameters into camelCase
-      const closePriceAccount = currentIx.data.closePriceAccount
+      //Grab the very last instruction in the entire sequence bundle
+      const lastInstruction = sequence[sequence.length - 1]
 
+      //You can only fresh your own account unless you are liquidating someone.
+      try
+      {
+        const txForRefresh = txs[currentIx.txIndex]
+        const compiledIxsForRefresh = txForRefresh.message.compiledInstructions
+        const accountKeysForRefresh = txForRefresh.message.staticAccountKeys
+        const ixObjForRefresh = compiledIxsForRefresh[currentIx.ixIndex]
+
+        const lendingUserOwnerPubKey = accountKeysForRefresh[ixObjForRefresh.accountKeyIndexes[0]]
+
+        //If the signer is not the lending user owner, only allow if final instruction is a liquidation
+        const signerMatchesOwner = lendingUserOwnerPubKey.toBase58() === transactionSignerPubKey.toBase58()
+
+        if(!signerMatchesOwner)
+        {
+          //Last instruction must be a liquidation action
+          const liquidationMethods = new Set([
+            "liquidateAccount",
+            "liquidateAccountSameToken",
+            "liquidateAccountSameSubMarket"
+          ])
+
+          if(!liquidationMethods.has(lastInstruction.name))
+          {
+            throw new Error(
+              `Oracle Rejected: Attempting to refresh lending user: (${lendingUserOwnerPubKey.toBase58()}) ` +
+              `by signer: (${transactionSignerPubKey.toBase58()}). You can only refresh someone else if you are liquidating them.`
+            )
+          }
+
+          //Verify the liquidation target (first account) equals the lending user being refreshed
+          const txForLast = txs[lastInstruction.txIndex]
+          const compiledIxsForLast = txForLast.message.compiledInstructions
+          const accountKeysForLast = txForLast.message.staticAccountKeys
+          const ixObjForLast = compiledIxsForLast[lastInstruction.ixIndex]
+
+          const liquidatiAccountOwnerPubKey = accountKeysForLast[ixObjForLast.accountKeyIndexes[0]]
+
+          if(liquidatiAccountOwnerPubKey.toBase58() !== lendingUserOwnerPubKey.toBase58())
+          {
+            throw new Error(
+              `Oracle Rejected: Liquidation target (${liquidatiAccountOwnerPubKey.toBase58()}) does not match ` +
+              `the lending user being refreshed (${lendingUserOwnerPubKey.toBase58()}).`
+            )
+          }
+        }
+      }
+      catch(err: any)
+      {
+        throw new Error(`Transaction safety verification failed while validating refresh owner/liquidation: ${err.message}`)
+      }
+
+      const closePriceAccount = currentIx.data.closePriceAccount
       //RULE: If closePriceAccount is false, a valid configuration must protect the end of the bundle
       if(!closePriceAccount)
       {
-        //Grab the very last instruction in the entire sequence bundle
-        const lastInstruction = sequence[sequence.length - 1]
-
         //Is it a valid action instruction?
         const isTerminalAction = actionInstructions.has(lastInstruction.name)
 
