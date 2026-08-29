@@ -283,8 +283,8 @@ export async function confirmTransactionPolling(
 
   while(true)
   {
-    //1. Check for a safety timeout (e.g., 25s) to avoid hitting Cloudflare's hard 30s limit
-    if(Date.now() - startTime > 25000)
+    //1. Check for a safety timeout (e.g., 30s) to avoid hitting Cloudflare's hard 30s limit
+    if(Date.now() - startTime > 30000)
       throw new Error("Transaction confirmation timed out via polling helper.")
 
     //2. Fetch signature status using standard HTTP POST
@@ -309,8 +309,8 @@ export async function confirmTransactionPolling(
     if(currentBlockHeight > lastValidBlockHeight)
       throw new Error("Transaction expired. Block height exceeded lastValidBlockHeight.")
 
-    //4. Delay 1.5 seconds between poll attempts to prevent RPC rate-limits
-    await new Promise(resolve => setTimeout(resolve, 1500))
+    //4. Delay 2.0 seconds between poll attempts to prevent RPC rate-limits
+    await new Promise(resolve => setTimeout(resolve, 2000))
   }
 }
 
