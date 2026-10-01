@@ -270,9 +270,9 @@ export async function confirmTransactionPolling(
 ): Promise<void>
 {
   const startTime = Date.now()
-  
+
   //Map Solana's commitment levels to numerical weights for comparison
-  const weights: Record<string, number> = 
+  const weights: Record<string, number> =
   { 
     "processed": 1, 
     "confirmed": 2, 
@@ -280,6 +280,7 @@ export async function confirmTransactionPolling(
   }
 
   const targetWeight = weights[commitment] || 1
+  let pollCount = 0
 
   while(true)
   {
@@ -287,9 +288,9 @@ export async function confirmTransactionPolling(
     if(Date.now() - startTime > 30000)
       throw new Error("Transaction confirmation timed out via polling helper.")
 
-    //2. Fetch signature status using standard HTTP POST
+    //2. Fetch signature status (1 Subrequest)
     const response = await connection.getSignatureStatuses([signature])
-    const status = response && response.value && response.value[0]
+    const status = response?.value?.[0]
 
     if(status)
     {
@@ -304,12 +305,16 @@ export async function confirmTransactionPolling(
         return
     }
 
-    //3. Fallback: check block height to verify if the blockhash has expired on-chain
-    const currentBlockHeight = await connection.getBlockHeight()
-    if(currentBlockHeight > lastValidBlockHeight)
-      throw new Error("Transaction expired. Block height exceeded lastValidBlockHeight.")
+    //3. Only check block height every 4th iteration (reduces subrequests by ~40%)
+    pollCount++
+    if(pollCount % 4 === 0)
+    {
+      const currentBlockHeight = await connection.getBlockHeight()
+      if(currentBlockHeight > lastValidBlockHeight)
+        throw new Error("Transaction expired. Block height exceeded lastValidBlockHeight.")
+    }
 
-    //4. Delay 2.0 seconds between poll attempts to prevent RPC rate-limits
+    //4. Delay 2.0s
     await new Promise(resolve => setTimeout(resolve, 2000))
   }
 }
