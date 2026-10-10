@@ -345,6 +345,8 @@ export function parseProgramErrorCode(error: any, program: any)
       if(errorMatch2[1])
         idlError = program.idl.errors.find((error: { code: number }) => error.code === parseInt(errorMatch2[1]))
   }
+  else if(errorCode == 1)
+    errorMessage = "Insufficient SOL for account creation/transaction"
   else if(errorCode)
     idlError = program.idl.errors.find((error: { code: number }) => error.code === errorCode)
 
