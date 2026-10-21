@@ -67,6 +67,21 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 {
 	const program = getAnchorWorkSpace(env)
 
+	return new Response(
+			JSON.stringify(
+			{
+				error: 'Price Oracle API is currently unavailable for maintenance'
+			}),
+			{
+				status: 500,
+				headers:
+				{
+					'Content-Type': 'application/json',
+					'Access-Control-Allow-Origin': '*',
+				},
+			}
+		)
+
 	try
 	{
 		//Grab the raw binary array directly from the request strea
