@@ -83,26 +83,25 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 
 	if(MAINTENANCE_MODE)
 		return new Response(
-				JSON.stringify(
+			JSON.stringify(
+			{
+				error: 'Price Oracle API is currently unavailable for maintenance'
+			}),
+			{
+				status: 500,
+				headers:
 				{
-					error: 'Price Oracle API is currently unavailable for maintenance'
-				}),
-				{
-					status: 500,
-					headers:
-					{
-						'Content-Type': 'application/json',
-						'Access-Control-Allow-Origin': '*',
-					},
-				}
-			)
+					'Content-Type': 'application/json',
+					'Access-Control-Allow-Origin': '*',
+				},
+			}
+		)
 
 	try
 	{
 		//Grab the raw binary array directly from the request strea
     const [tokenIds, hydratedTransactions] = await getTokenIdsAndSignedTransactionsFromMessageBuffer(request)
 
-		
 		const transactionSignerPubKey = validateIncomingTransactions(hydratedTransactions, program)
 		console.log("transactionSignerPubKey: ", transactionSignerPubKey.toBase58())
 		
@@ -119,7 +118,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 		//const data1 = await getUSDCPrices(tokenIds, usdcTrueValue, env)
 		//console.log("data1: ", data1)
 
-		//Get average data from Jupiter, Raydium, and Birdeye
+		//Get median data from Jupiter, Raydium, and Birdeye
 		const data2 = await getMultiSourcePrices(tokenIds, usdcTrueValue, env)
 		console.log("data2: ", data2)
 
