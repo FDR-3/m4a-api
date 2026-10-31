@@ -18,7 +18,7 @@ import { tokenDecimalHashMap,
 	tokenSellAmountsHashMap } from "./Tokens"
 import BN from "bn.js"
 import { getAnchorWorkSpace, validateIncomingTransactions, confirmTransactionPolling, parseProgramErrorCode } from "./AnchorWorkSpace"
-import { USE_JITO_BUNDLES } from "./EnvironmentSettings"
+import { MAINTENANCE_MODE, USE_JITO_BUNDLES } from "./EnvironmentSettings"
 //import { searcher, bundle } from "jito-ts"
 
 //Define your hardcoded fiat stablecoin basket anchors
@@ -81,20 +81,21 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 {
 	const program = getAnchorWorkSpace(env)
 
-	/*return new Response(
-			JSON.stringify(
-			{
-				error: 'Price Oracle API is currently unavailable for maintenance'
-			}),
-			{
-				status: 500,
-				headers:
+	if(MAINTENANCE_MODE)
+		return new Response(
+				JSON.stringify(
 				{
-					'Content-Type': 'application/json',
-					'Access-Control-Allow-Origin': '*',
-				},
-			}
-		)*/
+					error: 'Price Oracle API is currently unavailable for maintenance'
+				}),
+				{
+					status: 500,
+					headers:
+					{
+						'Content-Type': 'application/json',
+						'Access-Control-Allow-Origin': '*',
+					},
+				}
+			)
 
 	try
 	{
@@ -115,10 +116,10 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 		console.log(`Current Calculated USDC Value: $${formatedIntegerPart}.${decimalPart}`)
 
 		//Query Jupiter V6 Routing Quotes for all other token values compared to USDC
-		const data = await getUSDCPrices(tokenIds, usdcTrueValue, env)
-		console.log("data: ", data)
+		//const data1 = await getUSDCPrices(tokenIds, usdcTrueValue, env)
+		//console.log("data1: ", data1)
 
-		//Get average data from Jupiter, Radium, and 
+		//Get average data from Jupiter, Raydium, and Birdeye
 		const data2 = await getMultiSourcePrices(tokenIds, usdcTrueValue, env)
 		console.log("data2: ", data2)
 
@@ -147,7 +148,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 
 		const payload =
 		{
-			data,
+			data2,
 			slot
 		}
 		
