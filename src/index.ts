@@ -25,7 +25,21 @@ import { USE_JITO_BUNDLES } from "./EnvironmentSettings"
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" //6 Decimals
 const USDS_MINT = "USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA" //6 Decimals
 const NORMALIZER_18_DECIMALS = new BN("1000000000000000000")
-const zeroBN = new BN(0)
+const ZERO_BN = new BN(0)
+
+enum PriceSourceIndex
+{
+	Jupiter = 1,
+	Raydium = 2,
+	Birdeye = 3
+}
+
+type priceSource =
+{
+	priceIndex: PriceSourceIndex,
+	priceSourceName: string,
+	price: BN
+}
 
 export default
 {
@@ -67,7 +81,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 {
 	const program = getAnchorWorkSpace(env)
 
-	return new Response(
+	/*return new Response(
 			JSON.stringify(
 			{
 				error: 'Price Oracle API is currently unavailable for maintenance'
@@ -80,7 +94,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 					'Access-Control-Allow-Origin': '*',
 				},
 			}
-		)
+		)*/
 
 	try
 	{
@@ -102,6 +116,11 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 
 		//Query Jupiter V6 Routing Quotes for all other token values compared to USDC
 		const data = await getUSDCPrices(tokenIds, usdcTrueValue, env)
+		console.log("data: ", data)
+
+		//Get average data from Jupiter, Radium, and 
+		const data2 = await getMultiSourcePrices(tokenIds, usdcTrueValue, env)
+		console.log("data2: ", data2)
 
 		/*Using api endpoint below instead of sdk since this wasn't working when deployed to cloud flare's server
 		var searcherClient
@@ -391,7 +410,7 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 {
 	var data = []
 	const priceCheckedHashMap = new Map<number, boolean>()//This is used to keep the server from getting tied up with a long array of the same Token Id's
-	const normalizedPrices18Decimals: BN[] = []
+
 	//Query Jupiter V6 Routing Quotes for all other token values compared to USDC
 	for(const tokenId of tokenIds)
 	{
@@ -417,22 +436,36 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 				throw new Error(`Decimal entry not found in hash map for token: ${tokenMintAddress}`)
 
 			//Configure a trade size that has meaningful weight (e.g., 50 tokens)
-			const tokenAmountSimulatedSold = new BN(Number(tokenSellAmountsHashMap.get(tokenId)))
-			const inputAmount = tokenAmountSimulatedSold.mul(new BN(Math.pow(10, sellTokenDecimals))) 
+			const tokenAmountSimulatedSold = new BN(Number(tokenSellAmountsHashMap.get(tokenId)) * Math.pow(10, sellTokenDecimals))
 
 			const quoteResponse = await fetch("https://api.jup.ag/swap/v2/order?" +
 				new URLSearchParams(
 				{
 					inputMint: tokenMintAddress, //Non USDC Token
 					outputMint: USDC_MINT, //USDC
-					amount: Number(inputAmount).toString(), //simulate sell token amount
+					amount: Number(tokenAmountSimulatedSold).toString(), //simulate sell token amount
 					slippageBps: "0" //Pure spot check
 				}),
 				{ headers: { "x-api-key": env.JUPITER_API_KEY } }
 			)
 
 			if(!quoteResponse.ok)
-				throw new Error(`Jupiter V6 quote failed for token ${tokenMintAddress}`)
+			{
+				const errorBody = await quoteResponse.text()
+				let errorMessage = errorBody
+				try
+				{
+					const errorData: any = JSON.parse(errorBody)
+					if(typeof errorData.error === "string")
+						errorMessage = errorData.error
+				}
+				catch
+				{
+					//Keep the response body when it isn't JSON.
+				}
+
+				throw new Error(`Jupiter V6 quote failed for token ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})\n${errorMessage}`)
+			}
 
 			const quoteData: any = await quoteResponse.json()
 			const priceImpactPct = Math.abs(parseFloat(quoteData.priceImpactPct))
@@ -447,7 +480,6 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 			
 			//2. CALCULATE THE SPOT PRICE
 			const rawOutAmount = new BN(quoteData.outAmount) //Raw USDC tokens received (6 decimals)
-
 			const usdcDecimals = new BN(1_000_000) // USDC's 6 decimal fractional scale
 
       //The Native Decimals are irrelevant here because Jupiter already gave us the USDC 
@@ -457,7 +489,7 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
       //3. Divide by usdcDecimals (1,000,000) to drop 6 zeroes and perfectly land at 18 decimals!
       const finalPrice18Decimals = rawOutAmount.mul(usdcTrueValue).div(tokenAmountSimulatedSold).div(usdcDecimals)
 
-      if(finalPrice18Decimals.lt(zeroBN))
+      if(finalPrice18Decimals.lt(ZERO_BN))
         throw new Error(`The price can't be negative: ${finalPrice18Decimals}`)
 
 			data.push({ tokenId: tokenId, normalizedPrice18Decimals: finalPrice18Decimals })
@@ -471,7 +503,7 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 		}
 		else
 		{
-			if(usdcTrueValue.lt(zeroBN))
+			if(usdcTrueValue.lt(ZERO_BN))
 				throw new Error(`The price can't be negative: ${usdcTrueValue}`)
 
 			data.push({ tokenId: tokenId, normalizedPrice18Decimals: usdcTrueValue })
@@ -538,4 +570,293 @@ function timeOutCountDown(timeToWaitInSeconds: number)
 		if(timeLeftInSeconds <= 0)
 			clearInterval(countDownIntervalId)  
 	}, 10000) 
+}
+
+async function getMultiSourcePrices(
+  tokenIds: number[],
+  usdcTrueValue: BN,
+  env: any
+): Promise<Array<{ tokenId: number; normalizedPrice18Decimals: BN }>>
+{
+  const results = []
+  const priceCheckedHashMap = new Map<number, boolean>()
+
+  for(const tokenId of tokenIds)
+	{
+    const tokenMintAddress = tokenMintAddressHashMap.get(tokenId)
+
+    if(!tokenMintAddress)
+      throw new Error(`Requested Token Id not found in hash map for Id: ${tokenId}`)
+
+    if(priceCheckedHashMap.get(tokenId))
+      throw new Error("Duplicate Token Ids Detected")
+
+    priceCheckedHashMap.set(tokenId, true)
+
+    //Handle USDC
+    if(tokenMintAddress === USDC_MINT)
+		{
+      if(usdcTrueValue.lt(ZERO_BN))
+        throw new Error(`The price can't be negative: ${usdcTrueValue}`)
+      
+      results.push({ tokenId: tokenId, normalizedPrice18Decimals: usdcTrueValue })
+      continue
+    }
+
+		console.log(`Checking source consensus for token: ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+
+    const sellTokenDecimals = tokenDecimalHashMap.get(tokenId)
+    if(!sellTokenDecimals)
+      throw new Error(`Decimal entry not found in hash map for token: ${tokenMintAddress}`)
+
+    const tokenAmountSimulatedSold = new BN(Number(tokenSellAmountsHashMap.get(tokenId)) * Math.pow(10, sellTokenDecimals))
+
+    //==========================================
+    //FETCH FROM DIFFERENT SOURCES CONCURRENTLY
+    //==========================================
+    const [jupiterPrice, raydiumPrice/*, birdeyePrice*/] = await Promise.all([
+      fetchJupiterPrice(tokenMintAddress, tokenId, tokenAmountSimulatedSold, usdcTrueValue, env),
+			fetchRaydiumPrice(tokenMintAddress, tokenId, tokenAmountSimulatedSold, usdcTrueValue, env),
+			//fetchBirdeyePrice(tokenMintAddress, tokenId, env)
+      //fetchPythPrice(tokenId, env)
+    ])
+
+    const prices: priceSource[] = [
+      { priceIndex: PriceSourceIndex.Jupiter, priceSourceName: "Jupiter", price: jupiterPrice },
+      { priceIndex: PriceSourceIndex.Raydium, priceSourceName: "Raydium", price: raydiumPrice },
+      /*{ priceIndex: PriceSourceIndex.Birdeye, priceSourceName: "Birdeye", price: birdeyePrice }*/
+    ]
+
+    //==========================================
+    //STRICT DEVIATION & CONSENSUS VALIDATION
+    //==========================================
+    const validatedPrice = validateConsensusPrices(prices, tokenId)
+
+    results.push({ tokenId: tokenId, normalizedPrice18Decimals: validatedPrice })
+
+    //Format for logging
+		const tokenDecimals = tokenDecimalHashMap.get(tokenId)
+		if(tokenDecimals === undefined)
+			throw new Error(`Decimal entry not found in hash map for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)//new BN requires tokenDecimals be defined
+		const displayPrice = validatedPrice.mul(new BN(10).pow(new BN(tokenDecimals)))
+    const priceStringClean = displayPrice.toString().padStart(19, '0')
+    const integerPart = Number(priceStringClean.slice(0, -18)).toLocaleString('en-US')
+    const decimalPart = priceStringClean.slice(-18)
+    console.log(`✅ Consensus Price Approved: $${integerPart}.${decimalPart} for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})\n`)
+  }
+
+  return results
+}
+
+/**
+* SOURCE 1: Jupiter V2/V6 Swap Quote
+*/
+async function fetchJupiterPrice(
+  tokenMintAddress: string, 
+	tokenId: number,
+  tokenAmountSimulatedSold: BN,
+  usdcTrueValue: BN, 
+  env: any
+): Promise<BN>
+{
+  const response = await fetch("https://api.jup.ag/swap/v2/order?" +
+    new URLSearchParams({
+      inputMint: tokenMintAddress,
+      outputMint: USDC_MINT,
+      amount: tokenAmountSimulatedSold.toString(),
+      slippageBps: "0"
+    }),
+    { headers: { "x-api-key": env.JUPITER_API_KEY } }
+  )
+
+	if(!response.ok)
+	{
+		const errorBody = await response.text()
+		let errorMessage = errorBody
+		try
+		{
+			const errorData: any = JSON.parse(errorBody)
+			if(typeof errorData.error === "string")
+				errorMessage = errorData.error
+		}
+		catch
+		{
+			//Keep the response body when it isn't JSON.
+		}
+
+		throw new Error(`Source 1 (Jupiter) quote failed for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})\n${errorMessage}`)
+	}
+
+  const data: any = await response.json()
+	//console.log(`\nJupiter raw data: ${JSON.stringify(data)}`)
+
+	if(data?.outAmount === undefined || data?.outAmount === null)
+		throw new Error(`Source 1 (Jupiter) quote unavailable for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+	
+  const priceImpactPct = Math.abs(parseFloat(data.priceImpactPct))
+	if(!Number.isFinite(priceImpactPct))//This check prevents a NAN from passing the "if(priceImpactPct > 0.025)" check
+		throw new Error(`Source 1 (Jupiter) returned invalid price impact for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+	
+  if(priceImpactPct > 0.025)
+    throw new Error(`Source 1 (Jupiter) rejected: High price impact (${(priceImpactPct * 100).toFixed(2)}%)`)
+
+  const rawOutAmount = new BN(data.outAmount)
+  const usdcDecimals = new BN(1_000_000)
+	const price = rawOutAmount.mul(usdcTrueValue).div(tokenAmountSimulatedSold).div(usdcDecimals)
+	const tokenDecimals = tokenDecimalHashMap.get(tokenId)
+	if(tokenDecimals === undefined)
+		throw new Error(`Decimal entry not found in hash map for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)//new BN requires tokenDecimals be defined
+	const displayPrice = price.mul(new BN(10).pow(new BN(tokenDecimals)))
+
+	//Format for logging
+	const priceStringClean = displayPrice.toString().padStart(19, '0')
+	const integerPart = Number(priceStringClean.slice(0, -18)).toLocaleString('en-US')
+	const decimalPart = priceStringClean.slice(-18)
+	console.log(`✅ Jupiter Price: $${integerPart}.${decimalPart} for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+
+  return price
+}
+
+/*
+* SOURCE 2: Raydium Route API V2 Swap Quote
+*/
+async function fetchRaydiumPrice(
+  tokenMintAddress: string,
+	tokenId: number,
+  tokenAmountSimulatedSold: BN,
+  usdcTrueValue: BN,
+  env: any
+): Promise<BN>
+{
+  const response = await fetch("https://transaction-v1.raydium.io/compute/swap-base-in?" +
+    new URLSearchParams({
+      inputMint: tokenMintAddress,
+      outputMint: USDC_MINT,
+      amount: tokenAmountSimulatedSold.toString(),
+      slippageBps: "0",
+      txVersion: "V0"
+    })
+  )
+
+  if(!response.ok)
+		throw new Error(`Source 2 (Raydium) quote failed for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+
+  const data: any = await response.json()
+	//console.log(`\nRaydium raw data: ${JSON.stringify(data)}`)
+
+	if(data?.success === false)
+		throw new Error(`Source 2 (Raydium) quote failed for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})\n ${data.msg}`)
+  if(data?.data?.outputAmount === undefined || data?.data?.outputAmount === null)
+		throw new Error(`Source 2 (Raydium) quote unavailable for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+	
+  const priceImpactPct = Math.abs(parseFloat(data.data.priceImpactPct)) / 100//Has to be divided by 100 just for Raydium
+  if(!Number.isFinite(priceImpactPct))//This check prevents a NAN from passing the "if(priceImpactPct > 0.025)" check
+		throw new Error(`Source 2 (Raydium) returned invalid price impact for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+
+  if(priceImpactPct > 0.025)
+    throw new Error(`Source 2 (Raydium) rejected: High price impact (${(priceImpactPct * 100).toFixed(2)}%)`)
+
+  const rawOutAmount = new BN(data.data.outputAmount)
+  const usdcDecimals = new BN(1_000_000)
+	const price = rawOutAmount.mul(usdcTrueValue).div(tokenAmountSimulatedSold).div(usdcDecimals)
+	const tokenDecimals = tokenDecimalHashMap.get(tokenId)
+	if(tokenDecimals === undefined)
+		throw new Error(`Decimal entry not found in hash map for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)//new BN requires tokenDecimals be defined
+	const displayPrice = price.mul(new BN(10).pow(new BN(tokenDecimals)))
+
+	//Format for logging
+	const priceStringClean = displayPrice.toString().padStart(19, '0')
+	const integerPart = Number(priceStringClean.slice(0, -18)).toLocaleString('en-US')
+	const decimalPart = priceStringClean.slice(-18)
+	console.log(`✅ Raydium Price: $${integerPart}.${decimalPart} for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+
+  return price
+}
+
+/*
+* SOURCE 3: Birdeye Price API
+*/
+async function fetchBirdeyePrice(tokenMintAddress: string, tokenId: number, env: any): Promise<BN> 
+{
+  const response = await fetch(`https://public-api.birdeye.so/defi/price?address=${tokenMintAddress}`, {
+    headers: { "X-API-KEY": env.BIRDEYE_API_KEY || "" }})
+
+  if(!response.ok)
+		throw new Error(`Source 3 (Birdeye) quote failed for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+
+  const data: any = await response.json()
+  const usdPrice = data?.data?.value
+  if(usdPrice === undefined || usdPrice === null) 
+    throw new Error(`Source 3 (Birdeye) quote not found for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+
+  //Convert float price to 18-decimal BN safely
+  const priceString = Number(usdPrice).toFixed(18)
+  const [integerPart, fractionalPart] = priceString.split('.')
+  return new BN(integerPart).mul(NORMALIZER_18_DECIMALS).add(new BN(fractionalPart))
+}
+
+/*
+* SOURCE 2: Pyth Network Price Feed API
+*/
+/*async function fetchPythPrice(tokenId: number, env: any): Promise<BN>
+{
+  const pythPriceId = pythPriceIdHashMap.get(tokenId) //Map your token ID to Pyth Price ID hex
+  if(!pythPriceId)
+		throw new Error(`Pyth price ID missing for token ID ${tokenId}`)
+
+  const response = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${pythPriceId}`)
+  if(!response.ok)
+		throw new Error(`Source 2 (Pyth) request failed for token ID ${tokenId}`)
+
+  const data: any = await response.json()
+  const priceData = data.parsed?.[0]?.price
+  if(!priceData)
+		throw new Error(`Source 2 (Pyth) returned invalid structure for token ID ${tokenId}`)
+
+  const rawPrice = new BN(priceData.price)
+  const expo = Math.abs(priceData.expo)
+
+  //Normalize Pyth price to 18 decimals
+  //Pyth price = rawPrice * 10^expo. We want 18 decimals scale.
+  let normalized: BN
+  if(expo === 18)
+    normalized = rawPrice
+  else if(expo < 18)
+    normalized = rawPrice.mul(new BN(10).pow(new BN(18 - expo)))
+  else
+    normalized = rawPrice.div(new BN(10).pow(new BN(expo - 18)))
+
+  if(normalized.lte(ZERO_BN))
+		throw new Error(`Source 2 (Pyth) returned non-positive price`)
+
+  return normalized
+}*/
+
+/*
+* Validates that all price sources agree within the maximum 1.5% allowable deviation.
+* Throws an immediate error if ANY source deviates too far from the median.
+*/
+function validateConsensusPrices(prices: priceSource[], tokenId: number): BN
+{
+  //Sort prices to easily find the median
+  const sorted = [...prices].sort((a, b) => (a.price.gt(b.price) ? 1 : -1))
+  const median = sorted[Math.floor(sorted.length / 2)].price
+
+  //Maximum allowed deviation: 1.5% (150 basis points out of 10,000)
+  const maxDeviationBps = 150
+
+  for(let i = 0; i < prices.length; i++)
+	{
+    const price = prices[i].price
+    const diff = price.sub(median).abs()
+    
+    //Calculate deviation in basis points: (diff * 10000) / median
+    const deviationBps = diff.mul(new BN(10000)).div(median)
+
+    if(deviationBps.gt(new BN(maxDeviationBps)))
+      throw new Error(`🚨 ORACLE SECURITY ALERT: ${prices[i].priceSourceName} price source for token ${tokenNamesHashMap.get(tokenId)} deviates by ${(deviationBps.toNumber() / 100).toFixed(2)}% from median, exceeding safety limit (${maxDeviationBps / 100}%). Rejecting prices`)
+  }
+
+  //Return the median price as the safe consensus price
+  return median
 }
