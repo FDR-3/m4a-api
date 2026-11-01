@@ -18,7 +18,10 @@ import { tokenDecimalHashMap,
 	tokenSellAmountsHashMap } from "./Tokens"
 import BN from "bn.js"
 import { getAnchorWorkSpace, validateIncomingTransactions, confirmTransactionPolling, parseProgramErrorCode } from "./AnchorWorkSpace"
-import { MAINTENANCE_MODE, USE_JITO_BUNDLES } from "./EnvironmentSettings"
+import { MAINTENANCE_MODE,
+	USE_JITO_BUNDLES, 
+	MAX_RETRY_FETCH,
+	RETRY_TIME_OUT } from "./EnvironmentSettings"
 //import { searcher, bundle } from "jito-ts"
 
 //Define your hardcoded fiat stablecoin basket anchors
@@ -39,6 +42,43 @@ type priceSource =
 	priceIndex: PriceSourceIndex,
 	priceSourceName: string,
 	price: BN
+}
+
+export function buildOraclePricePayload(
+	data: Array<{ tokenId: number; normalizedPrice18Decimals: BN }>,
+	slot: BN,
+): { data: Array<{ tokenId: number; normalizedPrice18Decimals: BN }>; slot: BN }
+{
+	return { data, slot }
+}
+
+export async function readResponseErrorMessage(response: Response): Promise<string>
+{
+	try
+	{
+		const rawBody = await response.clone().text()
+		if(!rawBody)
+			return 'empty response body'
+
+		try
+		{
+			const parsed: any = JSON.parse(rawBody)
+			if(typeof parsed?.error === 'string')
+				return parsed.error
+			if(typeof parsed?.message === 'string')
+				return parsed.message
+		}
+		catch
+		{
+			//Keep the raw text when the body is not JSON.
+		}
+
+		return rawBody
+	}
+	catch
+	{
+		return 'Unable to read response body'
+	}
 }
 
 export default
@@ -120,7 +160,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 
 		//Get median data from Jupiter, Raydium, and Birdeye
 		const data2 = await getMultiSourcePrices(tokenIds, usdcTrueValue, env)
-		console.log("data2: ", data2)
+		//console.log("data2: ", data2)
 
 		/*Using api endpoint below instead of sdk since this wasn't working when deployed to cloud flare's server
 		var searcherClient
@@ -145,12 +185,9 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
 
 		const slot = new BN(await program.provider.connection.getSlot("processed"))
 
-		const payload =
-		{
-			data2,
-			slot
-		}
-		
+		const payload = buildOraclePricePayload(data2, slot)
+
+
 		const createTempOraclePriceDataInstruction = await program.methods.createTempOraclePriceData(payload)
       .accounts({ lendingUserAddress: transactionSignerPubKey })
 			.instruction()
@@ -240,7 +277,7 @@ async function bundleProtocolPriceTransactions(request: Request, env: any): Prom
         lastValidBlockHeight,
         "processed"
       )
-		
+
 			var userTxs = []
 			for(var i=0; i<hydratedTransactions.length; i++)
 			{
@@ -494,12 +531,17 @@ async function getUSDCPrices(tokenIds: number[], usdcTrueValue: BN, env: any)
 
 			data.push({ tokenId: tokenId, normalizedPrice18Decimals: finalPrice18Decimals })
 
-      //Pad string out to 19 characters to guarantee the slice logic functions cleanly below $1.00
-      const priceStringClean = finalPrice18Decimals.toString().padStart(19, '0')
-      const integerPart = priceStringClean.slice(0, -18)
-			const formatedIntegerPart = Number(integerPart).toLocaleString('en-US')
-      const decimalPart = priceStringClean.slice(-18)
-      console.log(`Price Normalized: $${formatedIntegerPart}.${decimalPart}`)
+			const tokenDecimals = tokenDecimalHashMap.get(tokenId)
+			if(tokenDecimals === undefined)
+				throw new Error(`Decimal entry not found in hash map for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)//new BN requires tokenDecimals be defined
+			const displayPrice = finalPrice18Decimals.mul(new BN(10).pow(new BN(tokenDecimals)))
+
+			//Format for logging
+			//Pad string out to 19 characters to guarantee the slice logic functions cleanly below $1.00
+			const priceStringClean = displayPrice.toString().padStart(19, '0')
+			const integerPart = Number(priceStringClean.slice(0, -18)).toLocaleString('en-US')
+			const decimalPart = priceStringClean.slice(-18)
+			console.log(`✅ Price Normalized: $${integerPart}.${decimalPart} for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
 		}
 		else
 		{
@@ -659,35 +701,45 @@ async function fetchJupiterPrice(
   env: any
 ): Promise<BN>
 {
-  const response = await fetch("https://api.jup.ag/swap/v2/order?" +
-    new URLSearchParams({
-      inputMint: tokenMintAddress,
-      outputMint: USDC_MINT,
-      amount: tokenAmountSimulatedSold.toString(),
-      slippageBps: "0"
-    }),
-    { headers: { "x-api-key": env.JUPITER_API_KEY } }
-  )
+	var response
 
-	if(!response.ok)
-	{
-		const errorBody = await response.text()
-		let errorMessage = errorBody
-		try
+	for(var i=1; i<=MAX_RETRY_FETCH; i++)
+  {
+		response = await fetch("https://api.jup.ag/swap/v2/order?" +
+			new URLSearchParams({
+				inputMint: tokenMintAddress,
+				outputMint: USDC_MINT,
+				amount: tokenAmountSimulatedSold.toString(),
+				slippageBps: "0"
+			}),
+			{ headers: { "x-api-key": env.JUPITER_API_KEY } }
+		)
+
+		if(!response.ok)
 		{
-			const errorData: any = JSON.parse(errorBody)
-			if(typeof errorData.error === "string")
-				errorMessage = errorData.error
-		}
-		catch
-		{
-			//Keep the response body when it isn't JSON.
+			const errorMessage = await readResponseErrorMessage(response)
+
+			if(errorMessage.includes("429") || errorMessage.includes("Too many requests"))
+			{
+				console.log(`Jupiter returned 429 error: retrying in ${RETRY_TIME_OUT*i*2/1000} seconds`)
+				await sleep(RETRY_TIME_OUT*i*2)//Exponential backoff, but shouldn't be too long for a stale ass price quote.
+				continue
+			}
+			throw new Error(`Source 1 (Jupiter) quote failed for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})\n${errorMessage}`)
 		}
 
-		throw new Error(`Source 1 (Jupiter) quote failed for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})\n${errorMessage}`)
+		break
 	}
 
-  const data: any = await response.json()
+	if(response === undefined)
+		throw new Error(`Source 1 (Jupiter) quote unavailable for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+	if(!response.ok)
+	{
+		const errorMessage = await readResponseErrorMessage(response)
+		throw new Error(`Source 1 (Jupiter) quote failed after ${MAX_RETRY_FETCH} attempts for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})\n${errorMessage}`)
+	}
+
+	const data: any = await response.json()
 	//console.log(`\nJupiter raw data: ${JSON.stringify(data)}`)
 
 	if(data?.outAmount === undefined || data?.outAmount === null)
@@ -728,19 +780,44 @@ async function fetchRaydiumPrice(
   env: any
 ): Promise<BN>
 {
-  const response = await fetch("https://transaction-v1.raydium.io/compute/swap-base-in?" +
-    new URLSearchParams({
-      inputMint: tokenMintAddress,
-      outputMint: USDC_MINT,
-      amount: tokenAmountSimulatedSold.toString(),
-      slippageBps: "0",
-      txVersion: "V0"
-    })
-  )
+	var response 
 
-  if(!response.ok)
-		throw new Error(`Source 2 (Raydium) quote failed for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+	for(var i=1; i<=MAX_RETRY_FETCH; i++)
+  {
+		response = await fetch("https://transaction-v1.raydium.io/compute/swap-base-in?" +
+			new URLSearchParams({
+				inputMint: tokenMintAddress,
+				outputMint: USDC_MINT,
+				amount: tokenAmountSimulatedSold.toString(),
+				slippageBps: "0",
+				txVersion: "V0"
+			})
+		)
 
+		if(!response.ok)
+		{
+			const errorMessage = await readResponseErrorMessage(response)
+
+			if(errorMessage.includes("429"))
+			{
+				console.log(`Raydium returned 429 error: retrying in ${RETRY_TIME_OUT*i*2/1000} seconds`)
+				await sleep(RETRY_TIME_OUT*i*2)//Exponential backoff, but shouldn't be too long for a stale ass price quote.
+				continue
+			}
+			throw new Error(`Source 2 (Raydium) quote failed for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})\n${errorMessage}`)
+		}
+
+		break
+	}
+
+	if(response === undefined)
+		throw new Error(`Source 2 (Raydium) quote unavailable for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})`)
+	if(!response.ok)
+	{
+		const errorMessage = await readResponseErrorMessage(response)
+		throw new Error(`Source 2 (Raydium) quote failed after ${MAX_RETRY_FETCH} attempts for ${tokenNamesHashMap.get(tokenId)} (${tokenMintAddress})\n${errorMessage}`)
+	}
+	
   const data: any = await response.json()
 	//console.log(`\nRaydium raw data: ${JSON.stringify(data)}`)
 
