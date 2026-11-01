@@ -919,8 +919,8 @@ function validateConsensusPrices(prices: priceSource[], tokenId: number): BN
   const sorted = [...prices].sort((a, b) => (a.price.gt(b.price) ? 1 : -1))
   const median = sorted[Math.floor(sorted.length / 2)].price
 
-  //Maximum allowed deviation: 1.5% (150 basis points out of 10,000)
-  const maxDeviationBps = 150
+  //Maximum allowed deviation: 2.0% (200 basis points out of 10,000)
+  const maxDeviationBps = 200
 
   for(let i = 0; i < prices.length; i++)
 	{

@@ -59,7 +59,7 @@ export const tokenSellAmountsHashMap: Map<number, number> = new Map(
   //[tokenIds.usdcTokenId, 10000], //USDC get it's price from it's own function
   [tokenIds.solTokenId,  500], //SOL
   [tokenIds.wethTokenId, 1], //WEth
-  [tokenIds.wbtcTokenId, 0.1] //WBtc
+  [tokenIds.wbtcTokenId, 0.001] //WBtc
 ])
 
 /*export const tokenSellAmountsHashMap: Map<number, number> = new Map(
